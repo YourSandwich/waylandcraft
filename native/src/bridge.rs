@@ -1,4 +1,4 @@
-use waylandcraft::{WaylandCraft, wlc_init};
+use crate::{WaylandCraft, wlc_init};
 use jni::{
     objects::JClass,
     sys::{jlong, jstring},

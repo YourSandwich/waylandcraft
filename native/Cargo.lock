@@ -819,15 +819,8 @@ dependencies = [
 name = "waylandcraft"
 version = "0.1.0"
 dependencies = [
- "smithay",
-]
-
-[[package]]
-name = "waylandcraft-bridge"
-version = "0.1.0"
-dependencies = [
  "jni",
- "waylandcraft",
+ "smithay",
 ]
 
 [[package]]

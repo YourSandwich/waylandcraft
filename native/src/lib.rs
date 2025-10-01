@@ -45,12 +45,14 @@ use smithay::{
     delegate_xdg_shell,
 };
 
-pub struct WaylandCraft<'a> {
+mod bridge;
+
+pub(crate) struct WaylandCraft<'a> {
     pub state: WLCState,
     pub event_loop: EventLoop<'a, WLCState>,
 }
 
-pub struct WLCState {
+pub(crate) struct WLCState {
     pub display_handle: DisplayHandle,
     pub socket: OsString,
     pub compositor_state: CompositorState,
@@ -175,7 +177,7 @@ impl XdgShellHandler for WLCState {
     }
 }
 
-pub struct WLCClient {
+pub(crate) struct WLCClient {
     compositor_state: CompositorClientState,
 }
 
@@ -243,7 +245,8 @@ fn register_virtual_output(state: &mut WLCState) {
     output.create_global::<WLCState>(&state.display_handle);
 }
 
-pub fn wlc_init() -> Result<WaylandCraft<'static>, Box<dyn std::error::Error>> {
+pub(crate) fn wlc_init(
+) -> Result<WaylandCraft<'static>, Box<dyn std::error::Error>> {
     let event_loop: EventLoop<WLCState> = EventLoop::try_new()?;
     let display: Display<WLCState> = Display::new()?;
     let socket = ListeningSocketSource::new_auto()?;
