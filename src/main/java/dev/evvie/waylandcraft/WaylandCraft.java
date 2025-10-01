@@ -25,13 +25,22 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 	@Override
 	public void onInitialize() {
 	}
+	
+	private Vec2 getToplevelDimensions(WLCToplevel toplevel) {
+		BufferTexture buf = toplevel.getSurfaceTree().getBuffer();
+		if(buf == null) return new Vec2(0, 0);
+		float width = buf.width;
+		float height = buf.height;
+		return new Vec2(width / 500, height / 500);
+	}
 
 	private void renderToplevelAt(WorldRenderContext ctx, WLCToplevel toplevel, Vec3 pos) {
 		BufferTexture buf = toplevel.getSurfaceTree().getBuffer();
 		if(buf == null) return;
 		
+		Vec2 size = getToplevelDimensions(toplevel);
 		RenderUtils.drawTexturedQuad(ctx.camera(), buf.getId(),
-				pos, pos.add(1, 0, 0), pos.add(1, 1, 0), pos.add(0, 1, 0),
+				pos, pos.add(size.x, 0, 0), pos.add(size.x, size.y, 0), pos.add(0, size.y, 0),
 				new Vec2(0, 1), new Vec2(1, 1), new Vec2(1, 0), new Vec2(0, 0));
 	}
 	
@@ -48,10 +57,12 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 			bridge.update();
 			
 			RenderSystem.enableDepthTest();
-			Vec3 vec = new Vec3(-250, 65, -500);
+			Vec3 pos = new Vec3(-250, 65, -500);
 			WLCToplevel[] toplevels = bridge.getToplevels();
 			for(WLCToplevel toplevel : toplevels) {
-				renderToplevelAt(context, toplevel, vec);
+				renderToplevelAt(context, toplevel, pos);
+				Vec2 size = getToplevelDimensions(toplevel);
+				pos = pos.add(size.x, 0, 0);
 			}
 		});
 	}

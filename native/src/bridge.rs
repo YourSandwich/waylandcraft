@@ -196,7 +196,7 @@ fn Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_toplevelSurface<'l>(
     let toplevel: &mut ToplevelSurface = jptr_to_toplevel(handle);
     let surface: &WlSurface = toplevel.wl_surface();
 
-    if !instance.bridge.surfaces.contains(&surface) {
+    if !instance.bridge.surfaces.contains(surface) {
         instance.bridge.surfaces.push(surface.clone());
     }
 
