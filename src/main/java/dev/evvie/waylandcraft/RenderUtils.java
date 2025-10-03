@@ -137,6 +137,10 @@ public class RenderUtils {
 		drawBlockOutline(camera, pos, 0.02, r, g, b);
 	}
 	
+	public static void drawMarker(Camera camera, Vec3 pos, double size, float r, float g, float b) {
+		drawWireCube(camera, pos, pos, size, r, g, b);
+	}
+	
 	public static void drawWireCube(Camera camera, Vec3 v1, Vec3 v2, double d, float r, float g, float b) {
 		Vec3 v1d = v1.subtract(d, d, d);
 		Vec3 v2d = v2.add(d, d, d);
