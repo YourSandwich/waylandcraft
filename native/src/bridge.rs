@@ -327,10 +327,11 @@ fn try_attach_dmabuf(
     unsafe {
         env.call_method_unchecked(
             obj,
-            (WLCSurface_class, "attachNewDmabuf", "(JII)V"),
+            (WLCSurface_class, "attachNewDmabuf", "(JJII)V"),
             ReturnType::Primitive(Primitive::Void),
             &[
                 jvalue { j: handle },
+                jvalue { j: (image as usize) as jlong },
                 jvalue { i: width },
                 jvalue { i: height }
             ]

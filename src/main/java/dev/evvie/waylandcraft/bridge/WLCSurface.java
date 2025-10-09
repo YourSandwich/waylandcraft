@@ -100,9 +100,9 @@ public class WLCSurface {
 	
 	// Create and attach a new DmabufTexture
 	// MUST only be used hwne attachDmabuf returns false for this handle!
-	protected void attachNewDmabuf(long handle, int width, int height) {
+	protected void attachNewDmabuf(long handle, long eglImage, int width, int height) {
 		WaylandCraft.LOGGER.info("Attach new dmabuf!");
-		DmabufTexture dmabuf = new DmabufTexture(handle, width, height);
+		DmabufTexture dmabuf = new DmabufTexture(handle, eglImage, width, height);
 		WaylandCraft.instance.bridge.addDmabuf(dmabuf);
 		
 		if(!attachDmabuf(handle)) {
