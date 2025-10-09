@@ -52,7 +52,6 @@ use smithay::{
     backend::{
         allocator::{
             dmabuf::Dmabuf,
-            Format, Fourcc, Modifier
         },
         drm::DrmNode,
     },
@@ -137,16 +136,7 @@ fn init_dmabuf(
     let render_node_path = egl.get_render_node();
     let render_node = DrmNode::from_path(render_node_path).unwrap().dev_id();
 
-    let formats = vec![
-        Format {
-            code: Fourcc::Argb8888,
-            modifier: Modifier::Linear,
-        },
-        Format {
-            code: Fourcc::Xrgb8888,
-            modifier: Modifier::Linear,
-        },
-    ];
+    let formats = egl.query_dmabuf_formats();
 
     let feedback = DmabufFeedbackBuilder::new(render_node, formats)
         .build()

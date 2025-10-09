@@ -3,8 +3,10 @@ package dev.evvie.waylandcraft.bridge;
 import org.jetbrains.annotations.Nullable;
 
 import dev.evvie.waylandcraft.BufferTexture;
+import dev.evvie.waylandcraft.BufferTexture.DmabufTexture;
 import dev.evvie.waylandcraft.BufferTexture.ShmBufferTexture;
 import dev.evvie.waylandcraft.BufferTexture.SinglePixelBufferTexture;
+import dev.evvie.waylandcraft.WaylandCraft;
 
 public class WLCSurface {
 	
@@ -82,6 +84,30 @@ public class WLCSurface {
 		this.buffer = new SinglePixelBufferTexture(r, g, b, a);
 		this.width = 1;
 		this.height = 1;
+	}
+	
+	// Attach an already known dmabuf
+	// The surface width and height are reset to the given buffer dimensions.
+	// Returns false if no DmabufTexture by that handle was found.
+	protected boolean attachDmabuf(long handle) {
+		if(this.buffer != null) {
+			this.buffer.release();
+		}
+		
+		this.buffer = WaylandCraft.instance.bridge.getDmabuf(handle);
+		return this.buffer != null;
+	}
+	
+	// Create and attach a new DmabufTexture
+	// MUST only be used hwne attachDmabuf returns false for this handle!
+	protected void attachNewDmabuf(long handle, int width, int height) {
+		WaylandCraft.LOGGER.info("Attach new dmabuf!");
+		DmabufTexture dmabuf = new DmabufTexture(handle, width, height);
+		WaylandCraft.instance.bridge.addDmabuf(dmabuf);
+		
+		if(!attachDmabuf(handle)) {
+			throw new RuntimeException("Failed to attach newly created dmabuf");
+		}
 	}
 	
 	// Set viewport source dimensions

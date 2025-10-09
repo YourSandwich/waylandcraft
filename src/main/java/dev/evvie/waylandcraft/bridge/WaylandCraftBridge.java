@@ -6,6 +6,7 @@ import org.apache.commons.lang3.ArrayUtils;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.glfw.GLFWNativeEGL;
 
+import dev.evvie.waylandcraft.BufferTexture.DmabufTexture;
 import net.minecraft.client.Minecraft;
 
 public class WaylandCraftBridge {
@@ -13,6 +14,7 @@ public class WaylandCraftBridge {
 	private long instance;
 	private ArrayList<WLCToplevel> toplevels = new ArrayList<WLCToplevel>();
 	private ArrayList<WLCSurface> surfaces = new ArrayList<WLCSurface>();
+	private ArrayList<DmabufTexture> dmabufs = new ArrayList<DmabufTexture>();
 	
 	static {
 		System.loadLibrary("waylandcraft");
@@ -57,6 +59,17 @@ public class WaylandCraftBridge {
 		return surface;
 	}
 	
+	protected DmabufTexture getDmabuf(long handle) {
+		for(DmabufTexture dmabuf : dmabufs) {
+			if(dmabuf.handle == handle) return dmabuf;
+		}
+		return null;
+	}
+	
+	protected void addDmabuf(DmabufTexture dmabuf) {
+		dmabufs.add(dmabuf);
+	}
+	
 	private void deleteNonExistingToplevels(long[] remainingHandles) {
 		ArrayList<WLCToplevel> toplevels_new = new ArrayList<WLCToplevel>();
 		for(WLCToplevel toplevel : this.toplevels) {
@@ -68,6 +81,19 @@ public class WaylandCraftBridge {
 			}
 		}
 		this.toplevels = toplevels_new;
+	}
+	
+	private void deleteNonExistingDmabufs(long[] remainingHandles) {
+		ArrayList<DmabufTexture> dmabufs_new = new ArrayList<DmabufTexture>();
+		for(DmabufTexture dmabuf : this.dmabufs) {
+			if(ArrayUtils.contains(remainingHandles, dmabuf.handle)) {
+				dmabufs_new.add(dmabuf);
+			}
+			else {
+				dmabuf.free();
+			}
+		}
+		this.dmabufs = dmabufs_new;
 	}
 	
 	private void deleteUnvisitedSurfaces() {
@@ -121,10 +147,12 @@ public class WaylandCraftBridge {
 		for(WLCToplevel toplevel : toplevels) {
 			WLCSurface root = toplevel.getSurfaceTree();
 			for(WLCSurface surface = root; surface != null; surface = surface.getNextChild()) {
-				updateSurfaceData(surface);
+				updateSurfaceData(instance, surface);
 				calculateSubpos(surface);
 			}
 		}
+		
+		deleteNonExistingDmabufs(dmabufs(instance));
 		
 		// Do client frame callbacks
 		sendFrame(instance);
@@ -174,7 +202,9 @@ public class WaylandCraftBridge {
 	
 	private static native long[] toplevels(long instance);
 	private static native long toplevelSurface(long instance, long handle);
-	private static native void updateSurfaceData(WLCSurface surface);
+	private static native void updateSurfaceData(long instance, WLCSurface surface);
+	
+	private static native long[] dmabufs(long instance);
 	
 	// Updates the surface tree given by the root surface
 	// This changes the doubly linked list of the WLCSurfaces.

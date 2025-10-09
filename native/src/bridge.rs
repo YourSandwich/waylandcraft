@@ -1,6 +1,6 @@
 use std::ops::DerefMut;
 use crate::{WaylandCraft, wlc_init, get_time};
-use crate::egl::*;
+use crate::egl::{EGLHelper, EGLDisplay};
 use smithay::{
     wayland::{
         shell::xdg::ToplevelSurface,
@@ -11,10 +11,17 @@ use smithay::{
         shm::{self, with_buffer_contents},
         viewporter::{ViewportCachedState, ensure_viewport_valid},
         single_pixel_buffer::get_single_pixel_buffer,
+        dmabuf::get_dmabuf,
     },
     input::pointer::{MotionEvent, ButtonEvent},
     utils::{Point, Logical, SERIAL_COUNTER, Size},
-    backend::input::ButtonState,
+    backend::{
+        allocator::{
+            dmabuf::WeakDmabuf,
+            Buffer,
+        },
+        input::ButtonState,
+    },
     reexports::{
         wayland_server::{
             protocol::{
@@ -37,6 +44,7 @@ use jni::{
 pub(crate) struct BridgeState {
     toplevels: Vec<Box<ToplevelSurface>>,
     surfaces: Vec<Box<WlSurface>>,
+    dmabufs: Vec<Box<WeakDmabuf>>,
 }
 
 impl BridgeState {
@@ -44,6 +52,7 @@ impl BridgeState {
         BridgeState {
             toplevels: vec![],
             surfaces: vec![],
+            dmabufs: vec![],
         }
     }
 }
@@ -207,13 +216,6 @@ impl BufferAttachResult {
             _ => false,
         }
     }
-
-    fn success(&self) -> bool {
-        match self {
-            Self::Success => true,
-            _ => false,
-        }
-    }
 }
 
 fn try_attach_shm(
@@ -285,13 +287,84 @@ fn try_attach_single_pixel(
     BufferAttachResult::Success
 }
 
+fn try_attach_dmabuf(
+    instance: &mut WaylandCraft,
+    env: &mut JNIEnv,
+    obj: &JObject,
+    buf: &WlBuffer,
+    surf_data: &SurfaceData
+) -> BufferAttachResult {
+    let dmabuf = match get_dmabuf(buf) {
+        Ok(d) => d,
+        Err(_) => return BufferAttachResult::NotManaged,
+    };
+
+    let width = dmabuf.width() as jint;
+    let height = dmabuf.height() as jint;
+    ensure_viewport_valid(surf_data, Size::new(width, height));
+
+    let weak = dmabuf.weak();
+    let handle = insert_get_handle(&mut instance.bridge.dmabufs, &weak);
+
+    let already_attached = unsafe {
+        env.call_method_unchecked(
+            obj,
+            (WLCSurface_class, "attachDmabuf", "(J)Z"),
+            ReturnType::Primitive(Primitive::Boolean),
+            &[
+                jvalue { j: handle }
+            ]
+        ).unwrap().z().unwrap()
+    };
+
+    if already_attached {
+        return BufferAttachResult::Success;
+    }
+
+    let image = instance.egl.dmabuf_to_image(dmabuf);
+    println!("Got EGLImage: {:?}", image);
+
+    unsafe {
+        env.call_method_unchecked(
+            obj,
+            (WLCSurface_class, "attachNewDmabuf", "(JII)V"),
+            ReturnType::Primitive(Primitive::Void),
+            &[
+                jvalue { j: handle },
+                jvalue { i: width },
+                jvalue { i: height }
+            ]
+        ).unwrap();
+    }
+
+    BufferAttachResult::Success
+}
+
+#[unsafe(no_mangle)]
+pub extern "system"
+fn Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_dmabufs<'l>(
+    env: JNIEnv<'l>,
+    _class: JClass<'l>,
+    ptr: jlong
+) -> jarray {
+    let instance = jptr_to_instance(ptr);
+    instance.bridge.dmabufs.retain(|d| !d.is_gone());
+
+    let dmabufs = get_all_handles(&mut instance.bridge.dmabufs);
+    let array = env.new_long_array(dmabufs.len() as jsize).unwrap();
+    env.set_long_array_region(&array, 0, &dmabufs).unwrap();
+    array.into_raw()
+}
+
 #[unsafe(no_mangle)]
 pub extern "system"
 fn Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_updateSurfaceData<'l>(
     mut env: JNIEnv<'l>,
     _class: JClass<'l>,
+    ptr: jlong,
     obj: JObject<'l>
 ) {
+    let instance = jptr_to_instance(ptr);
     let handle: jlong = env.get_field_unchecked(
         &obj,
         (WLCSurface_class, "handle", "J"),
@@ -323,6 +396,13 @@ fn Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_updateSurfaceData<'l>(
             if r.not_managed() {
                 r = try_attach_single_pixel(&mut env, &obj, &buf, &data);
             }
+
+            // If not managed by single pixel, try dmabuf
+            if r.not_managed() {
+                r = try_attach_dmabuf(instance, &mut env, &obj, &buf, &data);
+            }
+
+            let _ = r;
 
             // Done with buffer attachment
             buf.release();
