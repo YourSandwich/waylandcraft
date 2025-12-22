@@ -275,6 +275,10 @@ public class WaylandCraftBridge {
 		pointerButton(instance, button, state);
 	}
 	
+	public void sendScroll(int axis, double value) {
+		pointerAxis(instance, axis, value);
+	}
+	
 	private static native long init(long glfwGetProcAddress, long eglDisplay);
 	private static native void update(long instance);
 	private static native String socket(long instance);
@@ -308,6 +312,9 @@ public class WaylandCraftBridge {
 	
 	// Create pointer button event. `button` has to be the linux button code, state is 1 for pressed, 0 for released
 	private static native void pointerButton(long instance, int button, int state);
+	
+	// Create pointer axis event. `axis` is the scroll axis (0 for vertical, 1 for horizontal)
+	private static native void pointerAxis(long instance, int axis, double value);
 	
 	private static native void freeSurface(long instance, long handle);
 	private static native void freeToplevel(long instance, long handle);

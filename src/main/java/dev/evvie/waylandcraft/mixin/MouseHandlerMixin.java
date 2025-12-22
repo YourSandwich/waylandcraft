@@ -38,4 +38,25 @@ public class MouseHandlerMixin {
 		WaylandCraft.instance.bridge.sendButton(0x110 + button, action);
 	}
 	
+	@Inject(method = "onScroll", at = @At(value = "FIELD", target = "Lnet/minecraft/client/Minecraft;player:Lnet/minecraft/client/player/LocalPlayer;", ordinal = 1), cancellable = true)
+	public void onScroll(long windowHandle, double scrollX, double scrollY, CallbackInfo info) {
+		WindowHitResult result = WaylandCraft.instance.hitResult;
+		if(result == null) return;
+		
+		Window window = result.target;
+		if(!window.isAlive()) {
+			WaylandCraft.instance.hitResult = null;
+			return;
+		}
+		
+		info.cancel();
+		
+		// Check if on the backside of the window
+		if(result.dist < 0) return;
+		
+		// Multiplication by -10 is the inverse transformation from what GLFW does on wayland
+		WaylandCraft.instance.bridge.sendScroll(0, -scrollY * 10);
+		WaylandCraft.instance.bridge.sendScroll(1, -scrollX * 10);
+	}
+	
 }

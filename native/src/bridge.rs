@@ -17,14 +17,14 @@ use smithay::{
         single_pixel_buffer::get_single_pixel_buffer,
         dmabuf::get_dmabuf,
     },
-    input::pointer::{MotionEvent, ButtonEvent},
+    input::pointer::{MotionEvent, ButtonEvent, AxisFrame},
     utils::{Point, Logical, SERIAL_COUNTER, Size},
     backend::{
         allocator::{
             dmabuf::WeakDmabuf,
             Buffer,
         },
-        input::ButtonState,
+        input::{ButtonState, Axis},
     },
     reexports::{
         wayland_server::{
@@ -798,6 +798,33 @@ fn Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_pointerButton<'l>(
             button: button as u32,
             state
         }
+    );
+    pointer.frame(&mut instance.state);
+}
+
+#[unsafe(no_mangle)]
+pub extern "system"
+fn Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_pointerAxis<'l>(
+    _env: JNIEnv<'l>,
+    _class: JClass<'l>,
+    ptr: jlong,
+    axis: jint,
+    value: jdouble
+) {
+    let instance = jptr_to_instance(ptr);
+
+    let axis = match axis {
+        0 => Axis::Vertical,
+        1 => Axis::Horizontal,
+        _ => {return;}
+    };
+
+    let pointer = instance.state.seat.get_pointer().unwrap();
+    let event = AxisFrame::new(get_time()).value(axis, value);
+
+    pointer.axis(
+        &mut instance.state,
+        event,
     );
     pointer.frame(&mut instance.state);
 }
