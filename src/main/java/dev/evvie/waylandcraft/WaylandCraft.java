@@ -166,11 +166,11 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 		 * For X11 and Wayland hosts, this is a huge hack but should mostly work for now
 		 */
 		if(action == GLFW.GLFW_PRESS) {
-			LOGGER.info("PRESSED KEY: " + scancode);
+//			LOGGER.info("PRESSED KEY: " + scancode);
 			bridge.pressKey(scancode);
 		}
 		else if(action == GLFW.GLFW_RELEASE) {
-			LOGGER.info("RELEASED KEY: " + scancode);
+//			LOGGER.info("RELEASED KEY: " + scancode);
 			bridge.releaseKey(scancode);
 		}
 		
