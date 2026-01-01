@@ -3,7 +3,6 @@ package dev.evvie.waylandcraft.gui;
 import java.awt.Color;
 import java.util.ArrayList;
 import java.util.Optional;
-import java.util.stream.Stream;
 
 import org.joml.Matrix4f;
 import org.lwjgl.glfw.GLFW;
@@ -34,7 +33,7 @@ public class WindowManagerScreen extends Screen {
 	
 	private WaylandCraft wlc;
 	
-	private SelectorWidget selector;
+	private SelectorWidget<WLCToplevel> selector;
 	private Button grabButton;
 	private Button hideButton;
 	private Button resizeButton;
@@ -70,7 +69,12 @@ public class WindowManagerScreen extends Screen {
 		areaHeight = height - margin - topMargin;
 		scale = rootHeight / (float) areaHeight;
 		
-		selector = new SelectorWidget(margin, topMargin - 14, areaWidth / 6, 15, 6);
+		selector = new SelectorWidget<WLCToplevel>(margin, topMargin - 14, areaWidth / 6, 15, 6) {
+			@Override
+			public Component titleForElement(WLCToplevel element) {
+				return Component.literal(Optional.ofNullable(element.title).or(() -> Optional.ofNullable(element.appID)).orElse(""));
+			}
+		};
 		addRenderableWidget(selector);
 		
 		int buttonWidth = width / 6;
@@ -125,7 +129,7 @@ public class WindowManagerScreen extends Screen {
 	}
 	
 	private void exitResizeMode() {
-		wlc.bridge.resizeToplevel(resizeToplevel, resizeWidth, resizeHeight);
+		if(resizeToplevel != null && resizeToplevel.isAlive()) wlc.bridge.resizeToplevel(resizeToplevel, resizeWidth, resizeHeight);
 		
 		GLFW.glfwSetInputMode(Minecraft.getInstance().getWindow().getWindow(), GLFW.GLFW_CURSOR, GLFW.GLFW_CURSOR_NORMAL);
 		
@@ -149,36 +153,50 @@ public class WindowManagerScreen extends Screen {
 		context.vLine(width - margin, topMargin, height - margin, Color.white.getRGB());
 		
 		WLCToplevel[] toplevels = wlc.bridge.getToplevels();
-		selector.setEntries(Stream.of(toplevels).map((t) -> Optional.ofNullable(t.title).orElse("")).toArray(String[]::new));
+		selector.setEntries(toplevels);
 		
-		WLCToplevel current = null;
+		if(resizeMode && !resizeToplevel.isAlive()) {
+			exitResizeMode();
+		}
+		
+		WLCToplevel renderToplevel = null;
+		
+		if(!resizeMode) {
+			WLCToplevel lastFocus = focused;
+			
+			// Update focus to toplevel that has highest focus priority
+			focused = wlc.bridge.getMostRecentFocus();
+			wlc.bridge.focusSurface(focused);
+			
+			// Update selected toplevel in selector to currently focused toplevel, only if it changed
+			if(selector.selection() == null || focused != lastFocus) {
+				selector.select(focused);
+			}
+			
+			// When the selection has changed, change the currently focused toplevel
+			if(selector.selection() != focused) {
+				focused = selector.selection();
+				wlc.bridge.focusSurface(focused);
+			}
+			
+			renderToplevel = focused;
+		}
+		else {
+			focused = null;
+			renderToplevel = resizeToplevel;
+			
+			wlc.bridge.focusSurface(null);
+			setFocused(null); // Unfocus any widgets too
+		}
+		
 		windows.clear();
 		
-		if(toplevels.length > 0) {
-			current = toplevels[selector.selection()];
-			prepareToplevel(current);
+		if(renderToplevel != null) {
+			prepareToplevel(renderToplevel);
 			
 			for(WindowElement element : windows) {
 				renderWindow(context, element.window, element.x, element.y);
 			}
-		}
-		
-		if(resizeMode) {
-			wlc.bridge.focusSurface(null);
-			focused = null;
-			setFocused(null); // Unfocus any widgets too
-			
-			if(current != resizeToplevel) {
-				exitResizeMode();
-			}
-		}
-		else if(focused != current) {
-			focused = current;
-			
-			WaylandCraft.LOGGER.info("Changing focus to " + focused);
-			
-			if(focused != null) wlc.bridge.focusSurface(focused);
-			else wlc.bridge.focusSurface(null);
 		}
 		
 		if(focused != null) {

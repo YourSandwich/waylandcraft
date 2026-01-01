@@ -1,6 +1,7 @@
 package dev.evvie.waylandcraft.bridge;
 
 import java.util.ArrayList;
+import java.util.LinkedList;
 
 import org.apache.commons.lang3.ArrayUtils;
 import org.jetbrains.annotations.Nullable;
@@ -18,6 +19,8 @@ public class WaylandCraftBridge {
 	private ArrayList<WLCPopup> popups = new ArrayList<WLCPopup>();
 	private ArrayList<WLCSurface> surfaces = new ArrayList<WLCSurface>();
 	private ArrayList<DmabufTexture> dmabufs = new ArrayList<DmabufTexture>();
+	
+	private LinkedList<WLCToplevel> focusOrder = new LinkedList<WLCToplevel>();
 	
 	static {
 		System.loadLibrary("waylandcraft");
@@ -245,6 +248,8 @@ public class WaylandCraftBridge {
 		
 		deleteNonExistingDmabufs(dmabufs(instance));
 		
+		updateFocusOrder();
+		
 		// Do client frame callbacks
 		sendFrame(instance);
 	}
@@ -314,6 +319,25 @@ public class WaylandCraftBridge {
 			handle = toplevel.getHandle();
 		}
 		keyboardFocus(instance, handle);
+		
+		// Make toplevel most recently focused
+		if(toplevel != null) {
+			focusOrder.remove(toplevel);
+			focusOrder.addLast(toplevel);
+		}
+	}
+	
+	private void updateFocusOrder() {
+		focusOrder.removeIf((t) -> !toplevels.contains(t));
+		for(WLCToplevel toplevel : toplevels) {
+			if(!focusOrder.contains(toplevel)) focusOrder.addLast(toplevel);
+		}
+	}
+	
+	// Find the most recently focused toplevel that exists
+	public WLCToplevel getMostRecentFocus() {
+		updateFocusOrder();
+		return focusOrder.peekLast();
 	}
 	
 	public void pressKey(int scancode) {
