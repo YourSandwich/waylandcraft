@@ -16,6 +16,7 @@ public abstract class SelectorWidget<T> extends AbstractWidget {
 	// Currently selected element, should always be either null or an element assigned to a button
 	private T selected = null;
 	
+	@SuppressWarnings("unchecked")
 	public SelectorWidget(int x, int y, int buttonWidth, int buttonHeight, int maxCount) {
 		super(x, y, buttonWidth * maxCount, buttonHeight, Component.empty());
 		
@@ -93,6 +94,7 @@ public abstract class SelectorWidget<T> extends AbstractWidget {
 		public T element = null;
 		public boolean selected = false;
 		
+		@SuppressWarnings("unchecked")
 		public SelectorButton(SelectorWidget<T> widget, int x, int y, int width, int height, int idx) {
 			super(x, y, width, height, Component.empty(), (b) -> {widget.select(((SelectorButton<T>) b).element);}, (c) -> c.get());
 		}
