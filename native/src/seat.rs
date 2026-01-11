@@ -137,19 +137,22 @@ impl WLCSeatState {
             if let Some(focus) = &data.focus {
                 if *focus != surface {
                     // Previously focusing different surface
-                    pointer.leave(new_serial(), focus);
-                    pointer.enter(new_serial(), &surface, x, y);
+                    let serial = new_serial();
+                    pointer.leave(serial, focus);
+                    pointer.enter(serial, &surface, x, y);
+                    self.pointer_frame(pointer);
                     data.focus = Some(surface.clone());
                 } else {
                     // Focus already on this surface
                     pointer.motion(get_time(), x, y);
+                    self.pointer_frame(pointer);
                 }
             } else {
                 pointer.enter(new_serial(), &surface, x, y);
                 data.focus = Some(surface.clone());
-            }
 
-            self.pointer_frame(pointer);
+                self.pointer_frame(pointer);
+            }
         });
     }
 
