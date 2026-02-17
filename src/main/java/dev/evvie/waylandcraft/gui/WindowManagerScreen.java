@@ -420,6 +420,9 @@ public class WindowManagerScreen extends Screen {
 		
 		if(super.mouseScrolled(mouseX, mouseY, scrollX, scrollY)) return true;
 		
+		mouseX *= guiScale;
+		mouseY *= guiScale;
+		
 		HoveredSurface hovered = surfaceUnderPointer(mouseX, mouseY);
 		
 		if(hovered != null) {
