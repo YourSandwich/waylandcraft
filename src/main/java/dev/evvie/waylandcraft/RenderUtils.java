@@ -30,17 +30,16 @@ import net.minecraft.world.phys.Vec3;
 
 public class RenderUtils {
 	
-	private static ShaderInstance POSITION_COLOR_TEX;
+	private static ShaderInstance CUTOUT_NO_COLOR;
 	
 	protected static void registerShaders(CoreShaderRegistrationCallback.RegistrationContext context) throws IOException {
-		context.register(new ResourceLocation(WaylandCraft.MOD_ID, "position_color_tex"), DefaultVertexFormat.POSITION_COLOR_TEX, shader -> {
-			POSITION_COLOR_TEX = shader;
+		context.register(new ResourceLocation(WaylandCraft.MOD_ID, "cutout_no_color"), DefaultVertexFormat.POSITION_TEX, shader -> {
+			CUTOUT_NO_COLOR = shader;
 		});
 	}
 	
-	// Similar to the built-in position_color_tex shader but doesn't discard low-alpha fragments
-	public static ShaderInstance getPositionColorTexShader() {
-		return POSITION_COLOR_TEX;
+	public static ShaderInstance getCutoutNoColor() {
+		return CUTOUT_NO_COLOR;
 	}
 	
 	public static void blitGUIUnscaled(GuiGraphics graphics, int tex, float x1, float y1, float x2, float y2) {
@@ -98,6 +97,24 @@ public class RenderUtils {
 		tesselator.end();
 	}
 	
+	public static void drawQuadPosTex(Camera camera, OptionalInt texture, Supplier<ShaderInstance> shader, Vec3 p1, Vec3 p2, Vec3 p3, Vec3 p4, Vec2 uv1, Vec2 uv2, Vec2 uv3, Vec2 uv4) {
+		Tesselator tesselator = Tesselator.getInstance();
+		BufferBuilder buffer = tesselator.getBuilder();
+		Matrix4f positionMatrix = cameraTransform(camera);
+		
+		buffer.begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_TEX);
+		buffer.vertex(positionMatrix, (float) p1.x, (float) p1.y, (float) p1.z).uv(uv1.x, uv1.y).endVertex();
+		buffer.vertex(positionMatrix, (float) p2.x, (float) p2.y, (float) p2.z).uv(uv2.x, uv2.y).endVertex();
+		buffer.vertex(positionMatrix, (float) p3.x, (float) p3.y, (float) p3.z).uv(uv3.x, uv3.y).endVertex();
+		buffer.vertex(positionMatrix, (float) p4.x, (float) p4.y, (float) p4.z).uv(uv4.x, uv4.y).endVertex();
+		
+		RenderSystem.setShader(shader);
+		if(texture.isPresent()) {
+			RenderSystem.setShaderTexture(0, texture.getAsInt());
+		}
+		tesselator.end();
+	}
+	
 	public static void drawQuad(Camera camera, ResourceLocation res, Supplier<ShaderInstance> shader, Vec3 p1, Vec3 p2, Vec3 p3, Vec3 p4, Vec2 uv1, Vec2 uv2, Vec2 uv3, Vec2 uv4, Vec3 color, float alpha) {
 		TextureManager textureManager = Minecraft.getInstance().getTextureManager();
 		AbstractTexture tex = textureManager.getTexture(res);
@@ -110,6 +127,10 @@ public class RenderUtils {
 	
 	public static void drawTexturedQuad(Camera camera, int tex, Vec3 p1, Vec3 p2, Vec3 p3, Vec3 p4, Vec2 uv1, Vec2 uv2, Vec2 uv3, Vec2 uv4) {
 		drawQuad(camera, OptionalInt.of(tex), GameRenderer::getPositionColorTexShader, p1, p2, p3, p4, uv1, uv2, uv3, uv4, new Vec3(1.0, 1.0, 1.0), 1.0f);
+	}
+	
+	public static void drawCutoutColorlessQuad(Camera camera, int tex, Vec3 p1, Vec3 p2, Vec3 p3, Vec3 p4, Vec2 uv1, Vec2 uv2, Vec2 uv3, Vec2 uv4) {
+		drawQuadPosTex(camera, OptionalInt.of(tex), RenderUtils::getCutoutNoColor, p1, p2, p3, p4, uv1, uv2, uv3, uv4);
 	}
 	
 	public static void drawSolidQuad(Camera camera, Vec3 p1, Vec3 p2, Vec3 p3, Vec3 p4, float r, float g, float b) {

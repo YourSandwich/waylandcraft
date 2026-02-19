@@ -108,6 +108,7 @@ public class WindowDisplay {
 		Vec3 tr = tl.add(localX.scale(bufWidth));
 		
 		RenderUtils.drawTexturedQuad(ctx.camera(), window.framebuffer.getTexture(), tl, bl, br, tr, new Vec2(0, 0), new Vec2(0, 1), new Vec2(1, 1), new Vec2(1, 0));
+		RenderUtils.drawCutoutColorlessQuad(ctx.camera(), window.framebuffer.getTexture(), tr, br, bl, tl, new Vec2(1, 0), new Vec2(1, 1), new Vec2(0, 1), new Vec2(0, 0));
 	}
 	
 	public WindowBounds calculateBounds() {
