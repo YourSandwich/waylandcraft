@@ -26,15 +26,25 @@ public class WindowInHandRenderer {
 		poseStack.pushPose();
 		
 		float h = humanoidArm == HumanoidArm.RIGHT ? 1.0f : -1.0f;
-		poseStack.translate(h * 0.125f, -0.125f - 0.15 * Mth.sin(Mth.sqrt(attack) * Mth.PI), 0.0f);
+		poseStack.translate(h * 0.125f, -0.125f, 0.0f);
+		
 		if (!Minecraft.getInstance().player.isInvisible()) {
 			poseStack.pushPose();
 			poseStack.mulPose(Axis.ZP.rotationDegrees(h * 10.0f));
-			renderPlayerArm(poseStack, multiBufferSource, light, handHeight, 0, humanoidArm);
+			renderPlayerArm(poseStack, multiBufferSource, light, handHeight, attack, humanoidArm);
 			poseStack.popPose();
 		}
 		
-		poseStack.translate(h * 0.8f, handHeight * -0.6f - 0.25, -0.8f);
+		poseStack.translate(h * 0.8f, handHeight * -0.6f - 0.3, -0.85f);
+		
+		float sattack = Mth.sqrt(attack);
+		float osci = Mth.sin(sattack * (float) Math.PI);
+		float dx = -0.6f * osci;
+		float dy = 0.55f * Mth.sin(sattack * (float) (Math.PI * 2));
+		float dz = -0.6f * Mth.sin(attack * (float) Math.PI);
+		poseStack.translate(h * dx, dy - 0.3f * osci, dz);
+		poseStack.mulPose(Axis.XP.rotationDegrees(osci * -45.0f));
+		poseStack.mulPose(Axis.YP.rotationDegrees(h * osci * -30.0f));
 		
 		renderWindow(poseStack, multiBufferSource, h, light, itemStack);
 		
