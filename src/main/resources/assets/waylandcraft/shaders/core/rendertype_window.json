@@ -4,8 +4,8 @@
         "srcrgb": "srcalpha",
         "dstrgb": "1-srcalpha"
     },
-    "vertex": "waylandcraft:rendertype_window_item",
-    "fragment": "waylandcraft:rendertype_window_item",
+    "vertex": "waylandcraft:rendertype_window",
+    "fragment": "waylandcraft:rendertype_window",
     "samplers": [
         { "name": "Sampler0" }
     ],

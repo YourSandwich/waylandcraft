@@ -11,10 +11,10 @@ import net.minecraft.Util;
 import net.minecraft.client.renderer.RenderStateShard;
 import net.minecraft.client.renderer.RenderType;
 
-public class WindowRenderTypes {
+public class WaylandCraftRenderTypes {
 	
-	public static RenderType windowItem(int texture) {
-		return DummyRenderType.WINDOW_ITEM.apply(texture);
+	public static RenderType window(int texture) {
+		return DummyRenderType.WINDOW.apply(texture);
 	}
 	
 	/* This whole subclass dummy is necessary to access the RenderType.CompositeState class */
@@ -25,12 +25,12 @@ public class WindowRenderTypes {
 			throw new IllegalStateException("DummyRenderType constructor called");
 		}
 		
-		public static Function<Integer, RenderType> WINDOW_ITEM = Util.memoize(DummyRenderType::windowItem);
-		public static final RenderStateShard.ShaderStateShard RENDERTYPE_WINDOW_ITEM = new RenderStateShard.ShaderStateShard(RenderUtils::getRendertypeWindowItem);
+		public static Function<Integer, RenderType> WINDOW = Util.memoize(DummyRenderType::window);
+		public static final RenderStateShard.ShaderStateShard RENDERTYPE_WINDOW = new RenderStateShard.ShaderStateShard(RenderUtils::getRendertypeWindow);
 		
-		private static RenderType windowItem(int texture) {
+		private static RenderType window(int texture) {
 			RenderType.CompositeState compositeState = RenderType.CompositeState.builder()
-					.setShaderState(RENDERTYPE_WINDOW_ITEM)
+					.setShaderState(RENDERTYPE_WINDOW)
 					.setTextureState(new TextureIdShard(texture))
 					.setTransparencyState(TRANSLUCENT_TRANSPARENCY)
 					.setOutputState(ITEM_ENTITY_TARGET)
@@ -38,7 +38,7 @@ public class WindowRenderTypes {
 					.setOverlayState(NO_OVERLAY)
 					.setWriteMaskState(RenderStateShard.COLOR_DEPTH_WRITE)
 					.createCompositeState(true);
-			return create("wlc_window_item", DefaultVertexFormat.NEW_ENTITY, VertexFormat.Mode.QUADS, RenderType.TRANSIENT_BUFFER_SIZE, true, true, compositeState);
+			return create("wlc_window", DefaultVertexFormat.NEW_ENTITY, VertexFormat.Mode.QUADS, RenderType.TRANSIENT_BUFFER_SIZE, true, true, compositeState);
 		}
 		
 		private static class TextureIdShard extends RenderStateShard.EmptyTextureStateShard {

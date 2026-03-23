@@ -32,7 +32,6 @@ import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.CoreShaderRegistrationCallback;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
-import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.PacketSender;
@@ -93,7 +92,7 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 		keyOpenScreen = KeyBindingHelper.registerKeyBinding(new KeyMapping("key.windowManager", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_B, KEYBIND_CATEGORY));
 		keyCaptureKeyboard = KeyBindingHelper.registerKeyBinding(new KeyMapping("key.captureKeyboard", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_G, KEYBIND_CATEGORY));
 		
-		WorldRenderEvents.AFTER_ENTITIES.register(this::renderWorld);
+		WorldRenderEvents.END.register((ctx) -> this.renderWorld(ctx.camera()));
 		ClientTickEvents.END_CLIENT_TICK.register(this::onClientTick);
 		HudRenderCallback.EVENT.register(hudRenderer::render);
 		CoreShaderRegistrationCallback.EVENT.register(RenderUtils::registerShaders);
@@ -116,7 +115,8 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 	}
 	
 	/* Called during level render. Used for everything relevant in-game. */
-	public void renderWorld(WorldRenderContext context) {
+//	public void renderWorld(WorldRenderContext context) {
+	public void renderWorld(Camera camera) {
 		if(bridge == null) return;
 		
 		for(WLCPopup popup : bridge.getPopups()) {
@@ -157,10 +157,13 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 			bridge.focusSurface(focus);
 		}
 		
-		processPointerMotion(context.camera());
+		processPointerMotion(camera);
+		
+		displays.sort(((display1, display2) -> (int) Math.signum(display2.pivot.distanceToSqr(camera.getPosition()) - display1.pivot.distanceToSqr(camera.getPosition()))));
 		
 		RenderSystem.enableDepthTest();
-		displays.forEach((w) -> w.render(context));
+		displays.forEach((w) -> w.render(camera));
+		Minecraft.getInstance().renderBuffers().bufferSource().endBatch();
 		
 		updateOutputSize(inWMScreen);
 	}

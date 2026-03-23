@@ -68,7 +68,7 @@ public class WindowInHandRenderer {
 		poseStack.translate(-0.5, -0.5, 0);
 		
 		Pose pose = poseStack.last();
-		VertexConsumer buffer = source.getBuffer(WindowRenderTypes.windowItem(toplevel.framebuffer.getTexture()));
+		VertexConsumer buffer = source.getBuffer(WaylandCraftRenderTypes.window(toplevel.framebuffer.getTexture()));
 		Vector3f pos1 = pose.pose().transformPosition(0, 1, 0, new Vector3f());
 		Vector3f pos2 = pose.pose().transformPosition(0, 0, 0, new Vector3f());
 		Vector3f pos3 = pose.pose().transformPosition(1, 0, 0, new Vector3f());

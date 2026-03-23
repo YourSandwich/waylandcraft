@@ -112,8 +112,12 @@ public class WindowFramebuffer {
 		GL33.glEnable(GL33.GL_DEPTH_TEST);
 		GL33.glDepthFunc(GL33.GL_ALWAYS);
 		
+		int blendSrcAlphaRestore = GL33.glGetInteger(GL33.GL_BLEND_SRC);
+		int blendDstAlphaRestore = GL33.glGetInteger(GL33.GL_BLEND_DST);
+		boolean blendRestore = GL33.glIsEnabled(GL33.GL_BLEND);
+		
 		GL33.glEnable(GL33.GL_BLEND);
-		GL33.glBlendFunc(GL33.GL_SRC_ALPHA, GL33.GL_ONE_MINUS_SRC_ALPHA);
+		GL33.glBlendFunc(GL33.GL_ONE, GL33.GL_ONE_MINUS_SRC_ALPHA);
 		
 		int vao = GL33.glGenVertexArrays();
 		GL33.glBindVertexArray(vao);
@@ -123,7 +127,9 @@ public class WindowFramebuffer {
 		}
 		
 		GL33.glDeleteVertexArrays(vao);
-		GL33.glDisable(GL33.GL_BLEND);
+		
+		if(!blendRestore) GL33.glDisable(GL33.GL_BLEND);
+		GL33.glBlendFunc(blendSrcAlphaRestore, blendDstAlphaRestore);
 		GL33.glDepthFunc(GL33.GL_LEQUAL);
 	}
 	
