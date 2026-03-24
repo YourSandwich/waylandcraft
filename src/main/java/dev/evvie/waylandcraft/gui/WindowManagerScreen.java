@@ -10,6 +10,8 @@ import org.jetbrains.annotations.Nullable;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.opengl.GL33;
 
+import com.mojang.blaze3d.vertex.PoseStack;
+
 import dev.evvie.waylandcraft.WaylandCraft;
 import dev.evvie.waylandcraft.bridge.WLCAbstractWindow;
 import dev.evvie.waylandcraft.bridge.WLCPopup;
@@ -30,6 +32,8 @@ import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.phys.Vec2;
+import net.minecraft.world.phys.Vec3;
 
 public class WindowManagerScreen extends Screen {
 	
@@ -264,6 +268,11 @@ public class WindowManagerScreen extends Screen {
 		
 		GL33.glEnable(GL33.GL_BLEND);
 		
+		float guiScale = (float) Minecraft.getInstance().getWindow().getGuiScale();
+		PoseStack poseStack = context.pose();
+		poseStack.pushPose();
+		poseStack.scale(1 / guiScale, 1 / guiScale, 1);
+		
 		if(renderToplevel != null) {
 			prepareToplevel(renderToplevel);
 			
@@ -273,9 +282,16 @@ public class WindowManagerScreen extends Screen {
 				float y = element.y - buf.getYOff();
 				float w = buf.getWidth();
 				float h = buf.getHeight();
-				RenderUtils.blitGUIUnscaled(context, buf.getTexture(), x, y, x + w, y + h);
+				
+				Vec3 tl = new Vec3(x, y, 0);
+				Vec3 bl = new Vec3(x, y + h, 0);
+				Vec3 br = new Vec3(x + w, y + h, 0);
+				Vec3 tr = new Vec3(x + w, y, 0);
+				RenderUtils.renderWindow(buf, context.pose().last(), tl, bl, br, tr, new Vec2(0, 0), new Vec2(0, 1), new Vec2(1, 1), new Vec2(1, 0));
 			}
 		}
+		
+		poseStack.popPose();
 		
 		GL33.glDisable(GL33.GL_BLEND);
 		

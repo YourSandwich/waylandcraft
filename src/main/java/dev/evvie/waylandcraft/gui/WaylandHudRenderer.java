@@ -17,6 +17,8 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.Style;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.phys.Vec2;
+import net.minecraft.world.phys.Vec3;
 
 public class WaylandHudRenderer {
 	
@@ -72,10 +74,9 @@ public class WaylandHudRenderer {
 				ResourceLocation icon = wlc.xdgManager.getIcon(appID);
 				int iconX = x - font.lineHeight - 2;
 				int iconY = yoff;
-				int iconW = font.lineHeight;
-				int iconH = font.lineHeight;
+				int iconSize = font.lineHeight;
 				GL33.glEnable(GL33.GL_BLEND);
-				if(icon != null) RenderUtils.blitGUI(context, icon, iconX, iconY, iconX + iconW, iconY + iconH);
+				if(icon != null) context.blit(icon, iconX, iconY, 0, 0, 0, iconSize, iconSize, iconSize, iconSize);
 				GL33.glDisable(GL33.GL_BLEND);
 			}
 			
@@ -98,8 +99,12 @@ public class WaylandHudRenderer {
 			w /= guiScale * 2;
 			h /= guiScale * 2;
 			
+			Vec3 tl = new Vec3(x, y, 0);
+			Vec3 bl = new Vec3(x, y + h, 0);
+			Vec3 br = new Vec3(x + w, y + h, 0);
+			Vec3 tr = new Vec3(x + w, y, 0);
 			GL33.glEnable(GL33.GL_BLEND);
-			RenderUtils.blitGUI(context, buf.getTexture(), x, y, w, h);
+			RenderUtils.renderWindow(buf, context.pose().last(), tl, bl, br, tr, new Vec2(0, 0), new Vec2(0, 1), new Vec2(1, 1), new Vec2(1, 0));
 			GL33.glDisable(GL33.GL_BLEND);
 		}
 	}

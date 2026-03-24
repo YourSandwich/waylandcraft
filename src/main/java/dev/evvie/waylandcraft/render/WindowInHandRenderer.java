@@ -1,11 +1,6 @@
 package dev.evvie.waylandcraft.render;
 
-import org.joml.Vector2f;
-import org.joml.Vector3f;
-
 import com.mojang.blaze3d.vertex.PoseStack;
-import com.mojang.blaze3d.vertex.PoseStack.Pose;
-import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.mojang.math.Axis;
 
 import dev.evvie.waylandcraft.WaylandCraft;
@@ -14,12 +9,12 @@ import dev.evvie.waylandcraft.bridge.WaylandCraftBridge.Size;
 import dev.evvie.waylandcraft.item.WindowItem;
 import dev.evvie.waylandcraft.mixin.IItemInHandRendererMixin;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.client.renderer.MultiBufferSource;
-import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.phys.Vec2;
+import net.minecraft.world.phys.Vec3;
 
 public class WindowInHandRenderer {
 	
@@ -68,28 +63,17 @@ public class WindowInHandRenderer {
 		poseStack.scale(width, height, 1);
 		poseStack.translate(-0.5, -0.5, 0);
 		
-		Pose pose = poseStack.last();
-		VertexConsumer buffer = source.getBuffer(RenderUtils.window(toplevel.framebuffer.getTexture()));
-		Vector3f pos1 = pose.pose().transformPosition(0, 1, 0, new Vector3f());
-		Vector3f pos2 = pose.pose().transformPosition(0, 0, 0, new Vector3f());
-		Vector3f pos3 = pose.pose().transformPosition(1, 0, 0, new Vector3f());
-		Vector3f pos4 = pose.pose().transformPosition(1, 1, 0, new Vector3f());
+		Vec3 pos1 = new Vec3(0, 1, 0);
+		Vec3 pos2 = new Vec3(0, 0, 0);
+		Vec3 pos3 = new Vec3(1, 0, 0);
+		Vec3 pos4 = new Vec3(1, 1, 0);
 		
-		Vector2f uv1 = new Vector2f(0, 0);
-		Vector2f uv2 = new Vector2f(0, 1);
-		Vector2f uv3 = new Vector2f(1, 1);
-		Vector2f uv4 = new Vector2f(1, 0);
+		Vec2 uv1 = new Vec2(0, 0);
+		Vec2 uv2 = new Vec2(0, 1);
+		Vec2 uv3 = new Vec2(1, 1);
+		Vec2 uv4 = new Vec2(1, 0);
 		
-		Vector3f normal = pose.transformNormal(0, 0, 1, new Vector3f());
-		
-		int overlayCoords = OverlayTexture.NO_OVERLAY;
-		light = LightTexture.FULL_BRIGHT;
-		
-		// Front quad
-		buffer.vertex(/* pos */ pos1.x, pos1.y, pos1.z, /* color */ 1, 1, 1, 1, /* uv */ uv1.x, uv1.y, /* overlay */ overlayCoords, /* uv2 */ light, /* normal */ normal.x, normal.y, normal.z);
-		buffer.vertex(/* pos */ pos2.x, pos2.y, pos2.z, /* color */ 1, 1, 1, 1, /* uv */ uv2.x, uv2.y, /* overlay */ overlayCoords, /* uv2 */ light, /* normal */ normal.x, normal.y, normal.z);
-		buffer.vertex(/* pos */ pos3.x, pos3.y, pos3.z, /* color */ 1, 1, 1, 1, /* uv */ uv3.x, uv3.y, /* overlay */ overlayCoords, /* uv2 */ light, /* normal */ normal.x, normal.y, normal.z);
-		buffer.vertex(/* pos */ pos4.x, pos4.y, pos4.z, /* color */ 1, 1, 1, 1, /* uv */ uv4.x, uv4.y, /* overlay */ overlayCoords, /* uv2 */ light, /* normal */ normal.x, normal.y, normal.z);
+		RenderUtils.renderWindow(toplevel.framebuffer, poseStack.last(), pos1, pos2, pos3, pos4, uv1, uv2, uv3, uv4);
 	}
 	
 	public void renderPlayerArm(PoseStack poseStack, MultiBufferSource multiBufferSource, int light, float handHeight, float attack, HumanoidArm humanoidArm) {

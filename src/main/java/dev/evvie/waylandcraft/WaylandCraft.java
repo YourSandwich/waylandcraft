@@ -10,7 +10,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.mojang.blaze3d.platform.InputConstants;
-import com.mojang.blaze3d.systems.RenderSystem;
 
 import dev.evvie.waylandcraft.WindowDisplay.DisplayHitResult;
 import dev.evvie.waylandcraft.bridge.WLCAbstractWindow;
@@ -117,7 +116,6 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 	}
 	
 	/* Called during level render. Used for everything relevant in-game. */
-//	public void renderWorld(WorldRenderContext context) {
 	public void renderWorld(Camera camera) {
 		if(bridge == null) return;
 		
@@ -162,10 +160,7 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 		processPointerMotion(camera);
 		
 		displays.sort(((display1, display2) -> (int) Math.signum(display2.pivot.distanceToSqr(camera.getPosition()) - display1.pivot.distanceToSqr(camera.getPosition()))));
-		
-		RenderSystem.enableDepthTest();
 		displays.forEach((w) -> w.render(camera));
-		Minecraft.getInstance().renderBuffers().bufferSource().endBatch();
 		
 		updateOutputSize(inWMScreen);
 	}

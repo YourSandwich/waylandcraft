@@ -2,21 +2,16 @@ package dev.evvie.waylandcraft;
 
 import org.jetbrains.annotations.Nullable;
 import org.joml.Matrix3d;
-import org.joml.Vector2f;
 import org.joml.Vector3d;
-import org.joml.Vector3f;
 
 import com.mojang.blaze3d.vertex.PoseStack.Pose;
-import com.mojang.blaze3d.vertex.VertexConsumer;
 
 import dev.evvie.waylandcraft.bridge.WLCAbstractWindow;
 import dev.evvie.waylandcraft.bridge.WLCSurface;
 import dev.evvie.waylandcraft.render.RenderUtils;
 import net.minecraft.client.Camera;
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.LightTexture;
-import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.phys.Vec2;
 import net.minecraft.world.phys.Vec3;
 
 public class WindowDisplay {
@@ -111,31 +106,8 @@ public class WindowDisplay {
 		Vec3 br = bl.add(localX.scale(bufWidth));
 		Vec3 tr = tl.add(localX.scale(bufWidth));
 		
-//		RenderUtils.drawTexturedQuad(ctx.camera(), window.framebuffer.getTexture(), tl, bl, br, tr, new Vec2(0, 0), new Vec2(0, 1), new Vec2(1, 1), new Vec2(1, 0));
-//		RenderUtils.drawCutoutColorlessQuad(camera, window.framebuffer.getTexture(), tr, br, bl, tl, new Vec2(1, 0), new Vec2(1, 1), new Vec2(0, 1), new Vec2(0, 0));
-		
 		Pose pose = RenderUtils.cameraTransformPose(camera);
-		VertexConsumer buffer = Minecraft.getInstance().renderBuffers().bufferSource().getBuffer(RenderUtils.window(window.framebuffer.getTexture()));
-		Vector3f pos1 = pose.pose().transformPosition((float) tl.x, (float) tl.y, (float) tl.z, new Vector3f());
-		Vector3f pos2 = pose.pose().transformPosition((float) bl.x, (float) bl.y, (float) bl.z, new Vector3f());
-		Vector3f pos3 = pose.pose().transformPosition((float) br.x, (float) br.y, (float) br.z, new Vector3f());
-		Vector3f pos4 = pose.pose().transformPosition((float) tr.x, (float) tr.y, (float) tr.z, new Vector3f());
-		
-		Vector2f uv1 = new Vector2f(0, 0);
-		Vector2f uv2 = new Vector2f(0, 1);
-		Vector2f uv3 = new Vector2f(1, 1);
-		Vector2f uv4 = new Vector2f(1, 0);
-		
-		Vector3f normal = pose.transformNormal(0, 0, 1, new Vector3f());
-		
-		int overlayCoords = OverlayTexture.NO_OVERLAY;
-		int light = LightTexture.FULL_BRIGHT;
-		
-		// Front quad
-		buffer.vertex(/* pos */ pos1.x, pos1.y, pos1.z, /* color */ 1, 1, 1, 1, /* uv */ uv1.x, uv1.y, /* overlay */ overlayCoords, /* uv2 */ light, /* normal */ normal.x, normal.y, normal.z);
-		buffer.vertex(/* pos */ pos2.x, pos2.y, pos2.z, /* color */ 1, 1, 1, 1, /* uv */ uv2.x, uv2.y, /* overlay */ overlayCoords, /* uv2 */ light, /* normal */ normal.x, normal.y, normal.z);
-		buffer.vertex(/* pos */ pos3.x, pos3.y, pos3.z, /* color */ 1, 1, 1, 1, /* uv */ uv3.x, uv3.y, /* overlay */ overlayCoords, /* uv2 */ light, /* normal */ normal.x, normal.y, normal.z);
-		buffer.vertex(/* pos */ pos4.x, pos4.y, pos4.z, /* color */ 1, 1, 1, 1, /* uv */ uv4.x, uv4.y, /* overlay */ overlayCoords, /* uv2 */ light, /* normal */ normal.x, normal.y, normal.z);
+		RenderUtils.renderWindow(window.framebuffer, pose, tl, bl, br, tr, new Vec2(0, 0), new Vec2(0, 1), new Vec2(1, 1), new Vec2(1, 0));
 	}
 	
 	/* Transform absolute world coordinates to surface-local pixel coordinates relative to toplevel (0, 0)
