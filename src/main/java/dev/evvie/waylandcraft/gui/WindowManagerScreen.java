@@ -3,6 +3,7 @@ package dev.evvie.waylandcraft.gui;
 import java.awt.Color;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Optional;
 
 import org.jetbrains.annotations.Nullable;
@@ -63,7 +64,7 @@ public class WindowManagerScreen extends Screen {
 	// All window elements currently displayed, sorted by depth from bottom-most (root) to top-most (last leaf)
 	public ArrayList<WindowElement> windows = new ArrayList<WindowElement>();
 	
-	private ArrayList<Integer> pressedMouseButtons = new ArrayList<Integer>();
+	private ImplicitGrab implicitGrab = null;
 	
 	public WindowManagerScreen(WaylandCraft wlc) {
 		super(Component.literal("Window Manager"));
@@ -378,8 +379,27 @@ public class WindowManagerScreen extends Screen {
 		
 		HoveredSurface hovered = surfaceUnderPointer(x, y);
 		
-		if(hovered != null) wlc.bridge.sendMotionRefocus(hovered.surface, hovered.rx, hovered.ry);
-		else wlc.bridge.sendMotionOutside();
+		if(implicitGrab != null && !implicitGrab.surface.isAlive()) implicitGrab = null;
+		
+		if(implicitGrab == null) {
+			if(hovered != null) wlc.bridge.sendMotionRefocus(hovered.surface, hovered.rx, hovered.ry);
+			else wlc.bridge.sendMotionOutside();
+		}
+		else {
+			for(WindowElement elem : windows) {
+				WLCSurface surface;
+				for(surface = elem.window.getSurfaceTree(); surface != null && surface != implicitGrab.surface; surface = surface.getNextChild()) {}
+				if(surface == implicitGrab.surface) {
+					// Surface was found in this window elements' surface tree
+					
+					float rx = (float) x - elem.x - surface.xSubpos;
+					float ry = (float) y - elem.y - surface.ySubpos;
+					
+					wlc.bridge.sendMotion(rx, ry);
+					break;
+				}
+			}
+		}
 	}
 	
 	@Override
@@ -392,11 +412,14 @@ public class WindowManagerScreen extends Screen {
 		y *= guiScale;
 		
 		HoveredSurface hovered = surfaceUnderPointer(x, y);
-		if(hovered != null) {
-			if(!pressedMouseButtons.contains(mouseButton)) {
-				wlc.bridge.sendButton(0x110 + mouseButton, 1);
-				pressedMouseButtons.add(mouseButton);
-			}
+		if(implicitGrab == null && hovered != null) {
+			implicitGrab = new ImplicitGrab(hovered.surface);
+		}
+		
+		if(implicitGrab != null && !implicitGrab.pressedMouseButtons.contains(mouseButton)) {
+			implicitGrab.pressedMouseButtons.add(mouseButton);
+			wlc.bridge.sendButton(0x110 + mouseButton, 1);
+			
 			return true;
 		}
 		
@@ -415,12 +438,12 @@ public class WindowManagerScreen extends Screen {
 		x *= guiScale;
 		y *= guiScale;
 		
-		HoveredSurface hovered = surfaceUnderPointer(x, y);
-		if(hovered != null) {
-			if(pressedMouseButtons.contains(mouseButton)) {
-				wlc.bridge.sendButton(0x110 + mouseButton, 0);
-				pressedMouseButtons.remove(mouseButton);
-			}
+		if(implicitGrab != null && implicitGrab.pressedMouseButtons.contains(mouseButton)) {
+			implicitGrab.pressedMouseButtons.remove(mouseButton);
+			wlc.bridge.sendButton(0x110 + mouseButton, 0);
+			
+			if(implicitGrab.pressedMouseButtons.isEmpty()) implicitGrab = null;
+			
 			return true;
 		}
 		
@@ -485,8 +508,9 @@ public class WindowManagerScreen extends Screen {
 	@Override
 	public void removed() {
 		if(resizeMode) exitResizeMode();
-		for(int mouseButton : pressedMouseButtons) {
-			wlc.bridge.sendButton(mouseButton, 0);
+		if(implicitGrab != null) {
+			implicitGrab.pressedMouseButtons.forEach((button) -> wlc.bridge.sendButton(0x110 + button, 0));
+			implicitGrab = null;
 		}
 		wlc.bridge.deactivateKeyboard();
 	}
@@ -593,5 +617,16 @@ public class WindowManagerScreen extends Screen {
 	}
 	
 	private static record HoveredSurface(WLCSurface surface, float rx, float ry) {}
+	
+	private static class ImplicitGrab {
+		
+		public final WLCSurface surface;
+		public HashSet<Integer> pressedMouseButtons = new HashSet<Integer>();
+		
+		public ImplicitGrab(WLCSurface surface) {
+			this.surface = surface;
+		}
+		
+	}
 	
 }
