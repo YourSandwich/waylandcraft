@@ -21,7 +21,7 @@ import dev.evvie.waylandcraft.bridge.WaylandCraftBridge;
 import dev.evvie.waylandcraft.bridge.WaylandCraftBridge.Size;
 import dev.evvie.waylandcraft.grabs.MoveGrab;
 import dev.evvie.waylandcraft.grabs.PointerGrabMap;
-import dev.evvie.waylandcraft.grabs.PointerGrabMap.ButtonPress;
+import dev.evvie.waylandcraft.grabs.PointerGrabMap.ReleasedImplicitGrab;
 import dev.evvie.waylandcraft.gui.WaylandHudRenderer;
 import dev.evvie.waylandcraft.gui.WindowManagerScreen;
 import dev.evvie.waylandcraft.item.WindowItem;
@@ -256,10 +256,10 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 		
 		Integer moveRequest = bridge.checkMoveRequest();
 		if(moveRequest != null) {
-			ButtonPress button = pointerGrabs.releaseImplicitMatching(moveRequest.intValue());
-			if(button != null) {
+			ReleasedImplicitGrab implicit = pointerGrabs.releaseImplicitMatching(moveRequest.intValue());
+			if(implicit != null) {
 				// The serial matched an active implicit grab
-				pointerGrabs.startExclusive(new MoveGrab(button.window(), button.button()));
+				pointerGrabs.startExclusive(new MoveGrab(implicit));
 			}
 		}
 	}

@@ -41,7 +41,7 @@ public class PointerGrabMap {
 		if(implicitGrabs.contains(button)) return;
 		
 		int serial = wlc.bridge.sendButton(0x110 + button, 1);
-		implicitGrabs.add(window, button, serial);
+		implicitGrabs.add(window, surface, button, serial);
 	}
 	
 	public void startExclusive(PointerGrab grab) {
@@ -70,6 +70,8 @@ public class PointerGrabMap {
 		}
 		
 		if(implicitGrabs == null) return;
+		
+		implicitGrabs.updateMoveWorld(pos, view, up);
 		
 		DisplayHitResult hitResult = implicitGrabs.window.intersect(pos, view);
 		if(hitResult == null) return;
@@ -112,7 +114,7 @@ public class PointerGrabMap {
 	private void releaseImplicit() {
 		if(implicitGrabs == null) return;
 		
-		for(ButtonPress press : implicitGrabs.getPressed()) {
+		for(ImplicitGrab press : implicitGrabs.entries) {
 			wlc.bridge.sendButton(0x110 + press.button, 0);
 		}
 		implicitGrabs = null;
@@ -131,25 +133,27 @@ public class PointerGrabMap {
 		exclusiveGrab = null;
 	}
 	
-	public @Nullable ButtonPress releaseImplicitMatching(int serial) {
+	public @Nullable ReleasedImplicitGrab releaseImplicitMatching(int serial) {
 		if(isExclusiveGrabActive()) return null;
 		if(implicitGrabs == null) return null;
+		if(implicitGrabs.lastMoveEvent == null) return null;
 		
-		for(ButtonPress press : implicitGrabs.getPressed()) {
-			if(press.serial == serial) {
-				release(press.button);
-				return press;
+		for(ImplicitGrab implicit : implicitGrabs.entries) {
+			if(implicit.serial == serial) {
+				MoveWorldEvent lastMoveEvent = implicitGrabs.lastMoveEvent;
+				release(implicit.button); // Warning: Could set implicitGrabs to null
+				return new ReleasedImplicitGrab(implicit, lastMoveEvent);
 			}
 		}
 		return null;
 	}
 	
-	// Not a real pointer grab, just a way to represent active button presses on a WindowDisplay
 	private static class ImplicitGrabs {
 		
 		public final WindowDisplay window;
 		public final WLCSurface surface;
-		private ArrayList<ButtonPress> buttonsPressed = new ArrayList<ButtonPress>();
+		public ArrayList<ImplicitGrab> entries = new ArrayList<ImplicitGrab>();
+		public MoveWorldEvent lastMoveEvent = null;
 		
 		public ImplicitGrabs(WindowDisplay window, WLCSurface surface) {
 			this.window = window;
@@ -157,29 +161,36 @@ public class PointerGrabMap {
 		}
 		
 		public boolean contains(int button) {
-			return buttonsPressed.stream().anyMatch((press) -> press.button == button);
+			return entries.stream().anyMatch((press) -> press.button == button);
 		}
 		
 		public boolean isEmpty() {
-			return buttonsPressed.isEmpty();
+			return entries.isEmpty();
 		}
 		
-		public void add(WindowDisplay display, int button, int serial) {
+		public void add(WindowDisplay display, WLCSurface surface, int button, int serial) {
 			assert !contains(button);
-			buttonsPressed.add(new ButtonPress(display, button, serial));
+			entries.add(new ImplicitGrab(display, surface, button, serial));
 		}
 		
 		public void remove(int button) {
 			assert contains(button);
-			buttonsPressed.removeIf((press) -> press.button == button);
+			entries.removeIf((press) -> press.button == button);
 		}
 		
-		public ButtonPress[] getPressed() {
-			return buttonsPressed.toArray(ButtonPress[]::new);
+		public void updateMoveWorld(Vec3 pos, Vec3 view, Vec3 up) {
+			this.lastMoveEvent = new MoveWorldEvent(pos, view, up);
 		}
 		
 	}
 	
-	public static record ButtonPress(WindowDisplay window, int button, int serial) {}
+	// Not a real pointer grab, just a way to represent active button presses on a WindowDisplay
+	private static record ImplicitGrab(WindowDisplay window, WLCSurface surface, int button, int serial) {}
+	public static record MoveWorldEvent(Vec3 pos, Vec3 view, Vec3 up) {}
+	public static record ReleasedImplicitGrab(WindowDisplay window, WLCSurface surface, MoveWorldEvent lastMoveEvent, int button, int serial) {
+		protected ReleasedImplicitGrab(ImplicitGrab implicitGrab, MoveWorldEvent lastMoveEvent) {
+			this(implicitGrab.window(), implicitGrab.surface(), lastMoveEvent, implicitGrab.button(), implicitGrab.serial());
+		}
+	}
 	
 }
