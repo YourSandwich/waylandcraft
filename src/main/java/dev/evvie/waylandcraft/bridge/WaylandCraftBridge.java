@@ -1,5 +1,6 @@
 package dev.evvie.waylandcraft.bridge;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
@@ -12,8 +13,9 @@ import org.lwjgl.glfw.GLFW;
 import org.lwjgl.glfw.GLFWNativeEGL;
 
 import dev.evvie.waylandcraft.bridge.WLCAbstractWindow.SurfaceGeometry;
-import dev.evvie.waylandcraft.render.WindowFramebuffer;
+import dev.evvie.waylandcraft.desktop.RawDesktopEntry;
 import dev.evvie.waylandcraft.render.BufferTexture.DmabufTexture;
+import dev.evvie.waylandcraft.render.WindowFramebuffer;
 import net.minecraft.client.Minecraft;
 
 public class WaylandCraftBridge {
@@ -475,12 +477,12 @@ public class WaylandCraftBridge {
 		return new Size(size[0], size[1]);
 	}
 	
-	public String resolveName(String appID) {
-		return resolveName(instance, appID);
+	public RawDesktopEntry loadDesktopEntry(File path) {
+		return loadDesktopEntry(instance, path.getAbsolutePath());
 	}
 	
-	public String resolveIconPath(String appID) {
-		return resolveIconPath(instance, appID);
+	public RawDesktopEntry[] loadSystemDesktopEntries() {
+		return loadDesktopEntries(instance);
 	}
 	
 	public static record Size(int width, int height) {}
@@ -599,7 +601,7 @@ public class WaylandCraftBridge {
 	private static native void freeToplevel(long instance, long handle);
 	private static native void freePopup(long instance, long handle);
 	
-	private static native String resolveName(long instance, String appID);
-	private static native String resolveIconPath(long instance, String appID);
+	private static native RawDesktopEntry loadDesktopEntry(long instance, String path);
+	private static native RawDesktopEntry[] loadDesktopEntries(long instance);
 	
 }

@@ -1,6 +1,8 @@
 use std::ops::DerefMut;
+use std::path::PathBuf;
 use crate::{WaylandCraft, wlc_init};
 use crate::egl::{EGLHelper, EGLDisplay};
+use crate::xdg_spec::RawDesktopEntry;
 use smithay::{
     wayland::{
         shell::xdg::{
@@ -1523,60 +1525,111 @@ fn Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_freePopup<'l>(
     remove_element(&mut instance.bridge.popups, handle);
 }
 
-#[unsafe(no_mangle)]
-pub extern "system"
-fn Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_resolveName<'l>(
-    env: JNIEnv<'l>,
-    _class: JClass<'l>,
-    handle: jlong,
-    app_id: jstring
-) -> jstring {
-    let instance = jptr_to_instance(handle);
+#[allow(non_upper_case_globals)]
+const RawDesktopEntry_class: &str =
+                              "dev/evvie/waylandcraft/desktop/RawDesktopEntry";
 
-    let app_id: Option<String> = unsafe {
-        env.get_string_unchecked(&JString::from_raw(app_id))
-            .ok()
-            .map(|s| s.into())
-    };
-
-    let app_id = match app_id {
-        Some(id) => id,
-        None => {return std::ptr::null_mut();},
-    };
-
-    let name = instance.xdg.resolve_name(&app_id);
-    match name {
-        Some(n) => env.new_string(n).unwrap().into_raw(),
-        None => std::ptr::null_mut(),
+fn raw_desktop_entry_to_java<'l>(
+    env: &mut JNIEnv<'l>,
+    entry: &RawDesktopEntry
+) -> JObject<'l> {
+    macro_rules! to_jstr {
+        ($s:expr) => {
+            env.new_string($s).unwrap()
+        };
     }
+    macro_rules! nullstr {
+        () => {
+            unsafe { JString::from_raw(std::ptr::null_mut()) }
+        }
+    }
+    macro_rules! to_jstr_opt {
+        ($s:expr) => {
+            match $s {
+                Some(s) => to_jstr!(s),
+                None => nullstr!(),
+            }
+        };
+    }
+
+    let app_id: JString<'l> = to_jstr!(&entry.app_id);
+    let name: JString<'l> = to_jstr_opt!(&entry.name);
+    let generic_name: JString<'l> = to_jstr_opt!(&entry.generic_name);
+    let exec: JString<'l> = to_jstr_opt!(&entry.exec);
+    let exec_terminal: jboolean = entry.exec_terminal as jboolean;
+    let icon_path: JString<'l> = to_jstr_opt!(&entry.icon_path);
+
+    let str_sig = "Ljava/lang/String;";
+    let mut ctor_sig = String::new();
+    ctor_sig += "(";
+    ctor_sig += str_sig; // appId
+    ctor_sig += str_sig; // name
+    ctor_sig += str_sig; // genericName
+    ctor_sig += str_sig; // exec
+    ctor_sig += "Z"; // execTerminal
+    ctor_sig += str_sig; // iconPath
+    ctor_sig += ")V";
+
+    let ctor_args = [
+        JValue::Object(&app_id),
+        JValue::Object(&name),
+        JValue::Object(&generic_name),
+        JValue::Object(&exec),
+        JValue::Bool(exec_terminal),
+        JValue::Object(&icon_path),
+    ];
+
+    env.new_object(
+        RawDesktopEntry_class,
+        ctor_sig,
+        &ctor_args
+    ).unwrap()
 }
 
 #[unsafe(no_mangle)]
 pub extern "system"
-fn Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_resolveIconPath<'l>(
-    env: JNIEnv<'l>,
+fn Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_loadDesktopEntry<'l>(
+    mut env: JNIEnv<'l>,
     _class: JClass<'l>,
-    handle: jlong,
-    app_id: jstring
-) -> jstring {
-    let instance = jptr_to_instance(handle);
-
-    let app_id: Option<String> = unsafe {
-        env.get_string_unchecked(&JString::from_raw(app_id))
-            .ok()
-            .map(|s| s.into())
+    ptr: jlong,
+    jpath: JString<'l>,
+) -> jobject {
+    let instance = jptr_to_instance(ptr);
+    let path: String = unsafe {
+        env.get_string_unchecked(&jpath).unwrap()
+    }.into();
+    let path: PathBuf = path.into();
+    let entry = match instance.xdg.load_entry(path) {
+        Some(e) => e,
+        None => { return std::ptr::null_mut() },
     };
 
-    let app_id = match app_id {
-        Some(id) => id,
-        None => {return std::ptr::null_mut();},
-    };
+    raw_desktop_entry_to_java(&mut env, &entry).into_raw()
+}
 
-    let path: Option<String> = instance.xdg.resolve_icon_path(&app_id)
-        .and_then(|p| p.to_str().map(|s| s.into()));
+#[unsafe(no_mangle)]
+pub extern "system"
+fn Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_loadDesktopEntries<'l>(
+    mut env: JNIEnv<'l>,
+    _class: JClass<'l>,
+    ptr: jlong,
+) -> jarray {
+    let instance = jptr_to_instance(ptr);
+    let entries = instance.xdg.load_entries();
+    let entries: Vec<JObject<'l>> = entries
+        .iter()
+        .map(|e| raw_desktop_entry_to_java(&mut env, e))
+        .collect();
 
-    match path {
-        Some(p) => env.new_string(p).unwrap().into_raw(),
-        None => std::ptr::null_mut(),
+    let array = env.new_object_array(
+        entries.len() as jsize,
+        RawDesktopEntry_class,
+        JObject::null()
+    ).unwrap();
+
+    for i in 0..entries.len() {
+        env.set_object_array_element(&array, i as jsize, &entries[i]).unwrap();
     }
+
+    array.into_raw()
 }

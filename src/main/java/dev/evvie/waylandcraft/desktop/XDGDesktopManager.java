@@ -1,13 +1,17 @@
-package dev.evvie.waylandcraft;
+package dev.evvie.waylandcraft.desktop;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
-import java.util.HashMap;
+import java.util.ArrayList;
+
+import org.apache.commons.codec.digest.DigestUtils;
+import org.jetbrains.annotations.Nullable;
 
 import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.platform.TextureUtil;
 
+import dev.evvie.waylandcraft.WaylandCraft;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.AbstractTexture;
 import net.minecraft.client.renderer.texture.TextureManager;
@@ -16,48 +20,52 @@ import net.minecraft.server.packs.resources.ResourceManager;
 
 public class XDGDesktopManager {
 	
-	private HashMap<String, String> nameCache = new HashMap<String, String>();
-	private HashMap<String, ResourceLocation> iconCache = new HashMap<String, ResourceLocation>();
+	private final WaylandCraft wlc;
+	private ArrayList<DesktopEntry> systemEntries;
+	private ArrayList<DesktopEntry> localEntries = new ArrayList<DesktopEntry>();
 	
-	public String getName(String appID) {
-		if(appID == null) return null;
+	public XDGDesktopManager(WaylandCraft wlc) {
+		this.wlc = wlc;
 		
-		if(nameCache.containsKey(appID)) {
-			return nameCache.get(appID);
-		}
-		
-		String name = WaylandCraft.instance.bridge.resolveName(appID);
-		nameCache.put(appID, name);
-		return name;
+		this.loadSystemEntries();
 	}
 	
-	public ResourceLocation getIcon(String appID) {
-		if(appID == null) return null;
-		
-		if(iconCache.containsKey(appID)) {
-			return iconCache.get(appID);
+	private void loadSystemEntries() {
+		systemEntries = new ArrayList<DesktopEntry>();
+		for(RawDesktopEntry raw : wlc.bridge.loadSystemDesktopEntries()) {
+			systemEntries.add(load(raw));
 		}
+	}
+	
+	private DesktopEntry load(RawDesktopEntry raw) {
+		IconTexture icon = tryLoadIcon(raw.iconPath);
+		ResourceLocation iconLocation = null;
 		
-		ResourceLocation location = null;
-		IconTexture icon = tryRetrieveIcon(appID);
 		if(icon != null) {
 			TextureManager textureManager = Minecraft.getInstance().getTextureManager();
-			location = new ResourceLocation(WaylandCraft.MOD_ID, "icon_" + appID);
-			
-			textureManager.register(location, icon);
+			iconLocation = new ResourceLocation(WaylandCraft.MOD_ID, "icon_" + DigestUtils.sha1Hex(raw.appId));
+			textureManager.register(iconLocation, icon);
 		}
 		
-		iconCache.put(appID, location);
-		return location;
+		return new DesktopEntry(raw.appId, raw.name, raw.genericName, raw.exec, raw.execTerminal, iconLocation);
 	}
 	
-	private IconTexture tryRetrieveIcon(String appID) {
-		try {
-			return retrieveIcon(appID);
-		} catch (IOException e) {
-			e.printStackTrace();
-			return null;
+	public @Nullable DesktopEntry forAppId(String appId) {
+		for(DesktopEntry entry : localEntries) {
+			if(entry.appId.equals(appId)) return entry;
 		}
+		for(DesktopEntry entry : systemEntries) {
+			if(entry.appId.equals(appId)) return entry;
+		}
+		return null;
+	}
+	
+	public @Nullable String getName(String appId) {
+		return forAppId(appId).name;
+	}
+	
+	public @Nullable ResourceLocation getIcon(String appId) {
+		return forAppId(appId).icon;
 	}
 	
 	private String getExtension(File file) {
@@ -68,10 +76,16 @@ public class XDGDesktopManager {
 		return path.substring(idx + 1);
 	}
 	
-	private IconTexture retrieveIcon(String appID) throws IOException {
-		String iconPath = WaylandCraft.instance.bridge.resolveIconPath(appID);
-		System.out.println("Found icon path: " + iconPath);
-		
+	private IconTexture tryLoadIcon(String iconPath) {
+		try {
+			return loadIcon(iconPath);
+		} catch(IOException e) {
+			e.printStackTrace();
+			return null;
+		}
+	}
+	
+	private IconTexture loadIcon(String iconPath) throws IOException {
 		if(iconPath == null) return null;
 		
 		File iconFile = new File(iconPath);

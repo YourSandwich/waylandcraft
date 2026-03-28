@@ -1,14 +1,22 @@
 use std::path::PathBuf;
 use freedesktop_desktop_entry::{
-    unicase::Ascii,
     DesktopEntry,
-    get_languages_from_env, desktop_entries, find_app_by_id,
+    get_languages_from_env, desktop_entries,
 };
 use cosmic_freedesktop_icons::lookup;
 
 pub struct XDGSpecHelper {
     locales: Vec<String>,
     entries: Vec<DesktopEntry>,
+}
+
+pub struct RawDesktopEntry {
+    pub app_id: String,
+    pub name: Option<String>,
+    pub generic_name: Option<String>,
+    pub exec: Option<String>,
+    pub exec_terminal: bool,
+    pub icon_path: Option<String>,
 }
 
 impl XDGSpecHelper {
@@ -22,18 +30,30 @@ impl XDGSpecHelper {
         }
     }
 
-    fn entry(&self, app_id: &str) -> Option<&DesktopEntry> {
-        find_app_by_id(&self.entries, Ascii::new(app_id))
+    fn to_raw(&self, entry: &DesktopEntry) -> RawDesktopEntry {
+        let icon = self.resolve_icon_path(entry);
+
+        RawDesktopEntry {
+            app_id: entry.id().into(),
+            name: entry.name(&self.locales).map(|c| c.into_owned()),
+            generic_name:
+                entry.generic_name(&self.locales).map(|c| c.into_owned()),
+            exec: entry.exec().map(|s| s.into()),
+            exec_terminal: entry.terminal(),
+            icon_path: icon.map(|p| p.into_os_string().into_string().unwrap()),
+        }
     }
 
-    pub fn resolve_name(&self, app_id: &str) -> Option<String> {
-        let entry = self.entry(app_id)?;
-
-        entry.name(&self.locales).map(|n| String::from(n))
+    pub fn load_entry(&self, path: PathBuf) -> Option<RawDesktopEntry> {
+        let entry = DesktopEntry::from_path(path, Some(&self.locales)).ok()?;
+        Some(self.to_raw(&entry))
     }
 
-    pub fn resolve_icon_path(&self, app_id: &str) -> Option<PathBuf> {
-        let entry = self.entry(app_id)?;
+    pub fn load_entries(&self) -> Vec<RawDesktopEntry> {
+        self.entries.iter().map(|e| self.to_raw(&e)).collect()
+    }
+
+    fn resolve_icon_path(&self, entry: &DesktopEntry) -> Option<PathBuf> {
         let icon = entry.icon()?;
 
         // Absolute icon path

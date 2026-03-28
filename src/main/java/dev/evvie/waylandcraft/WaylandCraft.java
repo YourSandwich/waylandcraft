@@ -20,6 +20,7 @@ import dev.evvie.waylandcraft.bridge.WLCToplevel;
 import dev.evvie.waylandcraft.bridge.WaylandCraftBridge;
 import dev.evvie.waylandcraft.bridge.WaylandCraftBridge.ResizeRequest;
 import dev.evvie.waylandcraft.bridge.WaylandCraftBridge.Size;
+import dev.evvie.waylandcraft.desktop.XDGDesktopManager;
 import dev.evvie.waylandcraft.grabs.MoveGrab;
 import dev.evvie.waylandcraft.grabs.PointerGrabMap;
 import dev.evvie.waylandcraft.grabs.PointerGrabMap.ImplicitGrab;
@@ -68,7 +69,7 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 	public WLCToplevel pinnedToplevel = null;
 	
 	public WindowItemManager itemManager = new WindowItemManager(this);
-	public XDGDesktopManager xdgManager = new XDGDesktopManager();
+	public XDGDesktopManager xdgManager;
 	
 	public KeyMapping keyOpenScreen;
 	public KeyMapping keyCaptureKeyboard;
@@ -110,7 +111,6 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 		CoreShaderRegistrationCallback.EVENT.register(RenderUtils::registerShaders);
 		ServerTickEvents.START_WORLD_TICK.register(itemManager::onServerTick);
 		ClientPlayConnectionEvents.JOIN.register(this::onClientJoin);
-		
 	}
 	
 	/* Update bridge and clients. May be called at any state of the game, even outside of a level
@@ -120,6 +120,7 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 		if(bridge == null) {
 			bridge = WaylandCraftBridge.start();
 			waylandSocket = bridge.getSocket();
+			xdgManager = new XDGDesktopManager(this);
 			
 			LOGGER.info("Server started on " + waylandSocket);
 		}
