@@ -209,13 +209,14 @@ public class AppLauncherScreen extends Screen {
 			RenderUtils.blit(context, SLOT_THINGY, x, y, width, height);
 			if(selected) RenderUtils.blit(context, SLOT_THINGY_SELECTED, x - 1, y - 1, width + 2, height + 2);
 			
-			int iconSize = entry.icon != null ? height - 10 : 0;
+			ResourceLocation icon = entry.getIcon();
+			int iconSize = icon != null ? height - 10 : 0;
 			
 			MutableComponent text = Component.literal(getTitle(entry));
 			if(isHoveredOrFocused()) text = text.withStyle(ChatFormatting.UNDERLINE);
 			
 			context.enableScissor(x + 4, y + 4, x + width - 4, y + height - 4);
-			if(entry.icon != null) RenderUtils.blit(context, entry.icon, x + 5, y + 5, iconSize, iconSize);
+			if(icon != null) RenderUtils.blit(context, icon, x + 5, y + 5, iconSize, iconSize);
 			context.drawString(font, text, x + 5 + iconSize + 5, y + height / 2 - font.lineHeight / 2, Color.white.getRGB());
 			context.disableScissor();
 			

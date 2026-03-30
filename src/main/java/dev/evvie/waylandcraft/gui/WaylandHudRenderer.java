@@ -9,6 +9,7 @@ import dev.evvie.waylandcraft.WaylandCraft;
 import dev.evvie.waylandcraft.WaylandCraft.KeyboardCaptureMode;
 import dev.evvie.waylandcraft.bridge.WLCAbstractWindow.SurfaceGeometry;
 import dev.evvie.waylandcraft.bridge.WLCToplevel;
+import dev.evvie.waylandcraft.desktop.DesktopEntry;
 import dev.evvie.waylandcraft.render.RenderUtils;
 import dev.evvie.waylandcraft.render.WindowFramebuffer;
 import net.minecraft.ChatFormatting;
@@ -51,14 +52,11 @@ public class WaylandHudRenderer {
 		
 		for(WLCToplevel toplevel : WaylandCraft.instance.bridge.getToplevels()) {
 			String appID = toplevel.appID;
+			DesktopEntry entry = wlc.xdgManager.forAppId(appID);
 			
 			String name = "<unknown app>";
-			if(appID != null) {
-				name = appID;
-				
-				String xdgName = wlc.xdgManager.getName(appID);
-				if(xdgName != null) name = xdgName;
-			}
+			if(appID != null) name = appID;
+			if(entry != null && entry.name != null) name = entry.name;
 			
 			Style style = Style.EMPTY;
 			Color color = Color.white;
@@ -73,8 +71,8 @@ public class WaylandHudRenderer {
 			int x = context.guiWidth() - font.width(name) - 10;
 			context.drawString(font, Component.literal(name).withStyle(style), x, yoff, color.getRGB(), true);
 			
-			if(appID != null) {
-				ResourceLocation icon = wlc.xdgManager.getIcon(appID);
+			if(entry != null) {
+				ResourceLocation icon = entry.getIcon();
 				int iconX = x - font.lineHeight - 2;
 				int iconY = yoff;
 				int iconSize = font.lineHeight;

@@ -16,6 +16,7 @@ import com.mojang.blaze3d.vertex.VertexConsumer;
 
 import dev.evvie.waylandcraft.WaylandCraft;
 import dev.evvie.waylandcraft.bridge.WLCToplevel;
+import dev.evvie.waylandcraft.desktop.DesktopEntry;
 import dev.evvie.waylandcraft.item.WindowItem;
 import net.minecraft.client.renderer.ItemModelShaper;
 import net.minecraft.client.renderer.MultiBufferSource;
@@ -54,7 +55,10 @@ public class ItemRendererMixin {
 			
 			if(toplevel.appID == null) return;
 			
-			ResourceLocation icon = WaylandCraft.instance.xdgManager.getIcon(toplevel.appID);
+			DesktopEntry entry = WaylandCraft.instance.xdgManager.forAppId(toplevel.appID);
+			if(entry == null) return;
+			
+			ResourceLocation icon = entry.getIcon();
 			if(icon == null) return;
 			
 			poseStack.pushPose();

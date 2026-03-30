@@ -9,7 +9,6 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.apache.commons.codec.digest.DigestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.lwjgl.system.MemoryUtil;
 
@@ -18,10 +17,7 @@ import com.mojang.blaze3d.platform.TextureUtil;
 
 import dev.evvie.waylandcraft.WaylandCraft;
 import dev.evvie.waylandcraft.mixin.NativeImageMixin;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.AbstractTexture;
-import net.minecraft.client.renderer.texture.TextureManager;
-import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.resources.ResourceManager;
 
 public class XDGDesktopManager {
@@ -29,7 +25,6 @@ public class XDGDesktopManager {
 	private final WaylandCraft wlc;
 	private ArrayList<DesktopEntry> systemEntries = null;
 	private Thread systemEntryFetchThread;
-	private boolean iconsUploaded = false;
 	
 	public XDGDesktopManager(WaylandCraft wlc) {
 		this.wlc = wlc;
@@ -50,8 +45,6 @@ public class XDGDesktopManager {
 		this.systemEntries = systemEntries;
 		
 		WaylandCraft.LOGGER.info("Completed desktop entry loading in " + Duration.between(start, Instant.now()).toMillis() / 1000.0f + "s");
-		
-		createIcons();
 	}
 	
 	private boolean completeFetch() {
@@ -61,15 +54,7 @@ public class XDGDesktopManager {
 		} catch(InterruptedException e) {
 		}
 		
-		if(done) {
-			if(!iconsUploaded) {
-				uploadIcons();
-				iconsUploaded =  true;
-			}
-			return true;
-		}
-		
-		return false;
+		return done;
 	}
 	
 	public List<DesktopEntry> entries() {
@@ -83,6 +68,7 @@ public class XDGDesktopManager {
 	}
 	
 	public @Nullable DesktopEntry forAppId(String appId) {
+		if(appId == null) return null;
 		if(!completeFetch()) {
 			return null;
 		}
@@ -93,49 +79,6 @@ public class XDGDesktopManager {
 		return null;
 	}
 	
-	private void createIcons() {
-		Instant start = Instant.now();
-		
-		for(DesktopEntry entry : systemEntries) {
-			AbstractTexture texture = tryLoadIcon(entry.iconPath);
-			if(texture != null) {
-				entry.iconTex = texture;
-			}
-		}
-		
-		WaylandCraft.LOGGER.info("Completed icon creation in " + Duration.between(start, Instant.now()).toMillis() / 1000.0f + "s");
-	}
-	
-	private void uploadIcons() {
-		Instant start = Instant.now();
-		
-		TextureManager textureManager = Minecraft.getInstance().getTextureManager();
-		
-		for(DesktopEntry entry : systemEntries) {
-			if(entry.iconTex != null) {
-				((IconTexture) entry.iconTex).upload();
-				
-				ResourceLocation location = new ResourceLocation(WaylandCraft.MOD_ID, "icon_" + DigestUtils.sha1Hex(entry.appId));
-				textureManager.register(location, entry.iconTex);
-				entry.icon = location;
-			}
-		}
-		
-		WaylandCraft.LOGGER.info("Completed icon upload in " + Duration.between(start, Instant.now()).toMillis() / 1000.0f + "s");
-	}
-	
-	public @Nullable String getName(String appId) {
-		DesktopEntry entry = forAppId(appId);
-		if(entry == null) return null;
-		return entry.name;
-	}
-	
-	public @Nullable ResourceLocation getIcon(String appId) {
-		DesktopEntry entry = forAppId(appId);
-		if(entry == null) return null;
-		return entry.icon;
-	}
-	
 	private String getExtension(File file) {
 		String path = file.getAbsolutePath();
 		int idx = path.lastIndexOf('.');
@@ -144,7 +87,7 @@ public class XDGDesktopManager {
 		return path.substring(idx + 1);
 	}
 	
-	private AbstractTexture tryLoadIcon(String iconPath) {
+	public AbstractTexture tryLoadIcon(String iconPath) {
 		try {
 			return loadIcon(iconPath);
 		} catch(IOException e) {
@@ -202,6 +145,7 @@ public class XDGDesktopManager {
 		public BasicIconTexture(File file) throws IOException {
 			FileInputStream stream = new FileInputStream(file);
 			this.image = NativeImage.read(stream);
+			this.upload();
 		}
 		
 		@Override
@@ -227,8 +171,10 @@ public class XDGDesktopManager {
 			this.data = data;
 			this.width = width;
 			this.height = height;
+			this.upload();
 		}
 		
+		@Override
 		public void upload() {
 			if(data == null) return;
 			

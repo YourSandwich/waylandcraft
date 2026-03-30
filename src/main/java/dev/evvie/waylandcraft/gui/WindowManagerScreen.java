@@ -19,6 +19,7 @@ import dev.evvie.waylandcraft.bridge.WLCSurface;
 import dev.evvie.waylandcraft.bridge.WLCToplevel;
 import dev.evvie.waylandcraft.bridge.WaylandCraftBridge;
 import dev.evvie.waylandcraft.bridge.WaylandCraftBridge.Size;
+import dev.evvie.waylandcraft.desktop.DesktopEntry;
 import dev.evvie.waylandcraft.grabs.WindowGrab;
 import dev.evvie.waylandcraft.mixin.IMouseHandlerMixin;
 import dev.evvie.waylandcraft.render.RenderUtils;
@@ -96,10 +97,10 @@ public class WindowManagerScreen extends Screen {
 			
 			@Override
 			public @Nullable ResourceLocation iconForElement(WLCToplevel element) {
-				String appID = element.appID;
-				if(appID == null) return null;
+				DesktopEntry entry = wlc.xdgManager.forAppId(element.appID);
+				if(entry == null) return null;
 				
-				ResourceLocation icon = wlc.xdgManager.getIcon(appID);
+				ResourceLocation icon = entry.getIcon();
 				if(icon == null) return null;
 				
 				return icon;
