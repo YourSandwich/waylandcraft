@@ -6,4 +6,7 @@ package dev.evvie.waylandcraft.grabs;
  * Used as a way to remove stale pointer grabs that cannot operate any longer.
  */
 public class GrabDroppedException extends Exception {
+	
+	private static final long serialVersionUID = 1L;
+	
 }
