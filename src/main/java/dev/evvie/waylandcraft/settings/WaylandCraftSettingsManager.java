@@ -2,7 +2,6 @@ package dev.evvie.waylandcraft.settings;
 
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 
 import dev.evvie.waylandcraft.WaylandCraft;
@@ -14,8 +13,6 @@ public class WaylandCraftSettingsManager {
 	
 	private File settingsDir;
 	private File keymapFile;
-	
-	private boolean createKeymap = false;
 	
 	public WaylandCraftSettingsManager(WaylandCraft wlc) {
 		this.wlc = wlc;
@@ -38,26 +35,16 @@ public class WaylandCraftSettingsManager {
 		}
 		
 		keymapFile = new File(settingsDir, "keymap.txt");
-		if(!keymapFile.exists()) {
-			keymapFile.createNewFile();
-			createKeymap = true;
-		}
-		else if(!keymapFile.isFile()) {
-			throw new IOException("Waylandcraft keymap.txt exists but is not a file");
+		
+		String keymap = tryReadKeymapFromFile();
+		if(keymap == null) {
+			keymap = tryReadKeymapFromSystem();
 		}
 		
-		if(createKeymap) {
-			String keymap = tryReadKeymapFromSystem();
-			if(keymap == null) {
-				// Use currently existing (probably default) keymap instead
-				keymap = wlc.bridge.exportKeymap();
+		if(keymap != null) {
+			if(!wlc.bridge.setKeymapFromStr(keymap)) {
+				WaylandCraft.LOGGER.error("Failed to load keymap!");
 			}
-			writeKeymap(keymap);
-		}
-		
-		String keymap = readKeymap();
-		if(!wlc.bridge.setKeymapFromStr(keymap)) {
-			WaylandCraft.LOGGER.error("Failed to load keymap from file!");
 		}
 	}
 	
@@ -75,7 +62,7 @@ public class WaylandCraftSettingsManager {
 				WaylandCraft.LOGGER.error("xkbcli exited with error " + exitCode);
 			}
 		} catch (IOException | InterruptedException e) {
-			e.printStackTrace();
+			WaylandCraft.LOGGER.error("xkbcli invoke failed!", e);
 		}
 		if(keymap == null) {
 			WaylandCraft.LOGGER.error("Failed to dump keymap using xkbcli");
@@ -83,18 +70,19 @@ public class WaylandCraftSettingsManager {
 		return keymap;
 	}
 	
-	private void writeKeymap(String keymap) throws IOException {
-		FileOutputStream stream = new FileOutputStream(keymapFile);
-		stream.write(keymap.getBytes());
-		stream.close();
-	}
-	
-	private String readKeymap() throws IOException {
-		FileInputStream stream = new FileInputStream(keymapFile);
-		byte[] data = stream.readAllBytes();
-		String keymap = new String(data);
-		stream.close();
-		return keymap;
+	private String tryReadKeymapFromFile() {
+		if(!(keymapFile.exists() && keymapFile.isFile())) return null;
+		
+		try {
+			FileInputStream stream = new FileInputStream(keymapFile);
+			byte[] data = stream.readAllBytes();
+			String keymap = new String(data);
+			stream.close();
+			return keymap;
+		} catch(IOException e) {
+			WaylandCraft.LOGGER.info("Error reading keymap file!", e);
+			return null;
+		}
 	}
 	
 }
