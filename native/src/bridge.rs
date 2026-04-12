@@ -1753,3 +1753,48 @@ fn Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_setKeymapFromStr<'l>(
 
     instance.state.seat.change_keymap_from_str(keymap_str) as jboolean
 }
+
+#[unsafe(no_mangle)]
+pub extern "system"
+fn Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_checkDnd<'l>(
+    env: JNIEnv<'l>,
+    _class: JClass<'l>,
+    ptr: jlong,
+) -> jarray {
+    let instance = jptr_to_instance(ptr);
+    let dnd = match &instance.state.data.dnd {
+        Some(d) => d,
+        None => { return std::ptr::null_mut() }
+    };
+
+    let serial = Into::<u32>::into(dnd.start_serial) as jint;
+    let array = env.new_int_array(1).unwrap();
+    env.set_int_array_region(&array, 0, &[ serial ]).unwrap();
+    array.into_raw()
+}
+
+#[unsafe(no_mangle)]
+pub extern "system"
+fn Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_cancelDnd<'l>(
+    _env: JNIEnv<'l>,
+    _class: JClass<'l>,
+    ptr: jlong,
+) {
+    let instance = jptr_to_instance(ptr);
+    instance.state.data.dnd_cancel();
+}
+
+#[unsafe(no_mangle)]
+pub extern "system"
+fn Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_dndMotion<'l>(
+    _env: JNIEnv<'l>,
+    _class: JClass<'l>,
+    ptr: jlong,
+    handle: jlong,
+    x: jdouble,
+    y: jdouble,
+) {
+    let instance = jptr_to_instance(ptr);
+    let surface = jptr_to_wlsurface(handle);
+    instance.state.data.dnd_motion(surface, x, y);
+}
