@@ -1,12 +1,11 @@
 use crate::process::spawn;
+use cosmic_freedesktop_icons::lookup;
+use freedesktop_desktop_entry::{
+    DesktopEntry, desktop_entries, find_app_by_id, get_languages_from_env,
+    unicase::Ascii,
+};
 use std::ffi::OsString;
 use std::path::PathBuf;
-use freedesktop_desktop_entry::{
-    unicase::Ascii,
-    DesktopEntry,
-    get_languages_from_env, desktop_entries, find_app_by_id
-};
-use cosmic_freedesktop_icons::lookup;
 
 pub struct XDGSpecHelper {
     locales: Vec<String>,
@@ -30,11 +29,8 @@ impl XDGSpecHelper {
     pub fn init() -> Self {
         let locales = get_languages_from_env();
         let entries = desktop_entries(&locales);
-        
-        XDGSpecHelper {
-            locales,
-            entries
-        }
+
+        XDGSpecHelper { locales, entries }
     }
 
     fn to_raw(&self, entry: &DesktopEntry) -> RawDesktopEntry {
@@ -63,8 +59,9 @@ impl XDGSpecHelper {
         RawDesktopEntry {
             app_id: entry.id().into(),
             name: entry.name(&self.locales).map(|c| c.into_owned()),
-            generic_name:
-                entry.generic_name(&self.locales).map(|c| c.into_owned()),
+            generic_name: entry
+                .generic_name(&self.locales)
+                .map(|c| c.into_owned()),
             exec: entry.exec().map(|s| s.into()),
             exec_terminal: entry.terminal(),
             comment: entry.comment(&self.locales).map(|c| c.into_owned()),
@@ -94,37 +91,41 @@ impl XDGSpecHelper {
         }
 
         // Lookup 128x128 icons
-        let path = lookup(icon)
-            .with_size(128)
-            .with_scale(1)
-            .find();
-        if path.is_some() { return path }
+        let path = lookup(icon).with_size(128).with_scale(1).find();
+        if path.is_some() {
+            return path;
+        }
 
         // Lookup 64x64 icons
-        let path = lookup(icon)
-            .with_size(64)
-            .with_scale(1)
-            .find();
-        if path.is_some() { return path }
+        let path = lookup(icon).with_size(64).with_scale(1).find();
+        if path.is_some() {
+            return path;
+        }
 
         // Fallback to any icon paths
         lookup(icon).find()
     }
 
-    pub fn exec_app(&self, app_id: String, env: Vec<(OsString, OsString)>)
-        -> bool
-    {
+    pub fn exec_app(
+        &self,
+        app_id: String,
+        env: Vec<(OsString, OsString)>,
+    ) -> bool {
         self._exec_app(app_id, env).is_some()
     }
 
-    fn _exec_app(&self, app_id: String, env: Vec<(OsString, OsString)>)
-        -> Option<()>
-    {
+    fn _exec_app(
+        &self,
+        app_id: String,
+        env: Vec<(OsString, OsString)>,
+    ) -> Option<()> {
         let entry = find_app_by_id(&self.entries, Ascii::new(&app_id))?;
         let exec = entry.exec()?;
         let mut args = split_exec(&exec).ok()?;
 
-        if args.len() < 1 { return None }
+        if args.len() < 1 {
+            return None;
+        }
 
         let cmd = args.remove(0);
         spawn(cmd, args, env).ok()?;

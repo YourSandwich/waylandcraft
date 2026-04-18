@@ -1,11 +1,10 @@
 #![allow(dead_code)]
 
+use smithay::backend::allocator::{
+    Buffer, Format, Fourcc, Modifier, dmabuf::Dmabuf,
+};
 use std::ffi::{CStr, CString};
 use std::os::fd::AsRawFd;
-use smithay::backend::allocator::{
-    dmabuf::Dmabuf,
-    Buffer, Format, Fourcc, Modifier
-};
 
 pub type EGLBoolean = libc::c_uint;
 pub type EGLenum = libc::c_uint;
@@ -61,47 +60,45 @@ pub struct EGLHelper {
         extern "C" fn(EGLDisplay, EGLint, *mut EGLAttrib) -> EGLBoolean,
     eglQueryDeviceStringEXT:
         extern "C" fn(EGLDeviceEXT, EGLint) -> *const libc::c_char,
-    eglCreateImage:
-        extern "C" fn(
-            EGLDisplay,
-            EGLContext,
-            EGLenum,
-            EGLClientBuffer,
-            *const EGLAttrib
-        ) -> EGLImage,
+    eglCreateImage: extern "C" fn(
+        EGLDisplay,
+        EGLContext,
+        EGLenum,
+        EGLClientBuffer,
+        *const EGLAttrib,
+    ) -> EGLImage,
     eglGetError: extern "C" fn() -> EGLint,
-    eglQueryDmaBufFormatsEXT:
-        extern "C" fn(
-            EGLDisplay,
-            EGLint,
-            *mut EGLint,
-            *mut EGLint
-        ) -> EGLBoolean,
-    eglQueryDmaBufModifiersEXT:
-        extern "C" fn(
-            EGLDisplay,
-            EGLint,
-            EGLint,
-            *mut EGLuint64KHR,
-            *mut EGLBoolean,
-            *mut EGLint
-        ) -> EGLBoolean,
+    eglQueryDmaBufFormatsEXT: extern "C" fn(
+        EGLDisplay,
+        EGLint,
+        *mut EGLint,
+        *mut EGLint,
+    ) -> EGLBoolean,
+    eglQueryDmaBufModifiersEXT: extern "C" fn(
+        EGLDisplay,
+        EGLint,
+        EGLint,
+        *mut EGLuint64KHR,
+        *mut EGLBoolean,
+        *mut EGLint,
+    ) -> EGLBoolean,
 }
 
 impl EGLHelper {
     #[allow(non_snake_case)]
     pub fn new(dpy: EGLDisplay, proc_addr_ptr: usize) -> Self {
-        let glfwGetProcAddress: ProcAddrFn = unsafe {
-            std::mem::transmute(proc_addr_ptr)
-        };
+        let glfwGetProcAddress: ProcAddrFn =
+            unsafe { std::mem::transmute(proc_addr_ptr) };
 
         macro_rules! getfn {
             ($name:ident) => {
                 let $name = {
                     let n = CString::new(stringify!($name)).unwrap();
-                    unsafe {std::mem::transmute(
-                        glfwGetProcAddress(n.as_c_str().as_ptr())
-                    )}
+                    unsafe {
+                        std::mem::transmute(glfwGetProcAddress(
+                            n.as_c_str().as_ptr(),
+                        ))
+                    }
                 };
             };
         }
@@ -130,15 +127,13 @@ impl EGLHelper {
         (self.eglQueryDisplayAttribEXT)(
             self.display,
             EGL_DEVICE_EXT,
-            &mut dev_ret
+            &mut dev_ret,
         );
 
         let dev: EGLDeviceEXT = (dev_ret as usize) as EGLDeviceEXT;
 
-        let name_ptr = (self.eglQueryDeviceStringEXT)(
-            dev,
-            EGL_DRM_RENDER_NODE_FILE_EXT
-        );
+        let name_ptr =
+            (self.eglQueryDeviceStringEXT)(dev, EGL_DRM_RENDER_NODE_FILE_EXT);
 
         unsafe { CStr::from_ptr(name_ptr).to_str().unwrap() }
     }
@@ -149,7 +144,7 @@ impl EGLHelper {
             ($a:expr, $v:expr) => {
                 attribs.push($a as EGLAttrib);
                 attribs.push($v as EGLAttrib);
-            }
+            };
         }
 
         let mut handles = dmabuf.handles().map(|h| h.as_raw_fd());
@@ -213,7 +208,7 @@ impl EGLHelper {
             EGL_NO_CONTEXT,
             EGL_LINUX_DMA_BUF_EXT as EGLenum,
             std::ptr::null_mut(),
-            attribs.as_ptr()
+            attribs.as_ptr(),
         );
 
         image
@@ -225,16 +220,20 @@ impl EGLHelper {
 
         let mut formats: Vec<Format> = codes
             .iter()
-            .map(|c| Format { code: *c, modifier: Modifier::Invalid })
+            .map(|c| Format {
+                code: *c,
+                modifier: Modifier::Invalid,
+            })
             .collect();
 
         codes.iter().for_each(|&c| {
             let modifiers = self.query_dmabuf_format_modifiers(c);
             //println!("\t{} modifiers: {:?}", c, modifiers);
 
-            let f = modifiers
-                .into_iter()
-                .map(|m| Format { code: c, modifier: m });
+            let f = modifiers.into_iter().map(|m| Format {
+                code: c,
+                modifier: m,
+            });
             formats.extend(f);
         });
 
@@ -300,16 +299,10 @@ impl EGLHelper {
             external_only.set_len(modifiers_count as usize);
         }
 
-        let mut external_only = external_only
-            .iter()
-            .map(|&b| b == EGL_TRUE);
+        let mut external_only = external_only.iter().map(|&b| b == EGL_TRUE);
         // Keep only modifiers that allow non-external access
         modifiers.retain(|_| !external_only.next().unwrap());
 
-        modifiers
-            .into_iter()
-            .map(|m| Modifier::from(m))
-            .collect()
+        modifiers.into_iter().map(|m| Modifier::from(m)).collect()
     }
-
 }

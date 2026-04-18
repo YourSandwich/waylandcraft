@@ -1,69 +1,58 @@
 use crate::bridge::BridgeState;
-use crate::egl::EGLHelper;
-use crate::seat::WLCSeatState;
 use crate::ddm::WLCDataState;
-use crate::xdg_spec::XDGSpecHelper;
+use crate::egl::EGLHelper;
 use crate::output::WLCOutput;
-use std::sync::Arc;
-use std::time::Duration;
-use std::ffi::OsString;
+use crate::seat::WLCSeatState;
+use crate::xdg_spec::XDGSpecHelper;
 use smithay::{
+    backend::{allocator::dmabuf::Dmabuf, drm::DrmNode},
+    delegate_compositor, delegate_dmabuf, delegate_shm,
+    delegate_single_pixel_buffer, delegate_viewporter, delegate_xdg_shell,
     reexports::{
-        calloop::{
-            generic::Generic as GenericEvent,
-            self, EventLoop,
-        },
+        calloop::{self, EventLoop, generic::Generic as GenericEvent},
+        wayland_protocols::xdg::shell::server::xdg_toplevel::ResizeEdge,
         wayland_server::{
-            self,
+            self, Display, DisplayHandle,
             backend::{ClientData, ClientId, DisconnectReason},
             protocol::{
+                wl_buffer::WlBuffer, wl_output::WlOutput, wl_seat::WlSeat,
                 wl_surface::WlSurface,
-                wl_buffer::WlBuffer,
-                wl_seat::WlSeat,
-                wl_output::WlOutput,
             },
-            Display, DisplayHandle,
         },
-        wayland_protocols::xdg::shell::server::xdg_toplevel::ResizeEdge,
-    },
-    wayland::{
-        socket::ListeningSocketSource,
-        compositor::{
-            CompositorState, CompositorClientState, CompositorHandler,
-        },
-        buffer::BufferHandler,
-        shm::{ShmState, ShmHandler},
-        shell::xdg::{
-            XdgShellState, XdgShellHandler, ToplevelSurface, PopupSurface,
-            PositionerState
-        },
-        viewporter::ViewporterState,
-        dmabuf::{
-            DmabufState, DmabufGlobal, DmabufFeedbackBuilder, DmabufHandler,
-            ImportNotifier
-        },
-        single_pixel_buffer::SinglePixelBufferState,
-    },
-    backend::{
-        allocator::{
-            dmabuf::Dmabuf,
-        },
-        drm::DrmNode,
     },
     utils::Serial,
-    delegate_compositor, delegate_shm, delegate_xdg_shell, delegate_viewporter,
-    delegate_single_pixel_buffer, delegate_dmabuf
+    wayland::{
+        buffer::BufferHandler,
+        compositor::{
+            CompositorClientState, CompositorHandler, CompositorState,
+        },
+        dmabuf::{
+            DmabufFeedbackBuilder, DmabufGlobal, DmabufHandler, DmabufState,
+            ImportNotifier,
+        },
+        shell::xdg::{
+            PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler,
+            XdgShellState,
+        },
+        shm::{ShmHandler, ShmState},
+        single_pixel_buffer::SinglePixelBufferState,
+        socket::ListeningSocketSource,
+        viewporter::ViewporterState,
+    },
 };
+use std::ffi::OsString;
+use std::sync::Arc;
+use std::time::Duration;
 
 mod bridge;
-mod egl;
-mod seat;
 mod ddm;
-mod xdg_spec;
+mod egl;
 mod output;
-mod svg;
 mod process;
+mod seat;
+mod svg;
 mod utils;
+mod xdg_spec;
 
 pub(crate) struct WaylandCraft<'a> {
     pub state: WLCState,
@@ -142,7 +131,7 @@ impl WLCState {
 fn init_dmabuf(
     disp: &DisplayHandle,
     state: &mut DmabufState,
-    egl: &EGLHelper
+    egl: &EGLHelper,
 ) -> DmabufGlobal {
     let render_node_path = egl.get_render_node();
     let render_node = DrmNode::from_path(render_node_path).unwrap().dev_id();
@@ -168,13 +157,11 @@ impl CompositorHandler for WLCState {
         &client.get_data::<WLCClient>().unwrap().compositor_state
     }
 
-    fn commit(&mut self, _surface: &WlSurface) {
-    }
+    fn commit(&mut self, _surface: &WlSurface) {}
 }
 
 impl BufferHandler for WLCState {
-    fn buffer_destroyed(&mut self, _buffer: &WlBuffer) {
-    }
+    fn buffer_destroyed(&mut self, _buffer: &WlBuffer) {}
 }
 
 impl ShmHandler for WLCState {
@@ -192,7 +179,7 @@ impl DmabufHandler for WLCState {
         &mut self,
         _global: &DmabufGlobal,
         _dmabuf: Dmabuf,
-        notifier: ImportNotifier
+        notifier: ImportNotifier,
     ) {
         let _ = notifier.successful::<WLCState>();
     }
@@ -210,7 +197,7 @@ impl XdgShellHandler for WLCState {
     fn new_popup(
         &mut self,
         surface: PopupSurface,
-        positioner: PositionerState
+        positioner: PositionerState,
     ) {
         surface.with_pending_state(|state| {
             state.geometry = positioner.get_geometry();
@@ -226,7 +213,7 @@ impl XdgShellHandler for WLCState {
         &mut self,
         surface: PopupSurface,
         positioner: PositionerState,
-        token: u32
+        token: u32,
     ) {
         surface.with_pending_state(|state| {
             state.geometry = positioner.get_geometry();
@@ -250,7 +237,7 @@ impl XdgShellHandler for WLCState {
     fn fullscreen_request(
         &mut self,
         surface: ToplevelSurface,
-        _output: Option<WlOutput>
+        _output: Option<WlOutput>,
     ) {
         self.requests.fullscreen.push(surface);
     }
@@ -263,7 +250,7 @@ impl XdgShellHandler for WLCState {
         &mut self,
         _surface: ToplevelSurface,
         _seat: WlSeat,
-        serial: Serial
+        serial: Serial,
     ) {
         self.requests.move_interactive.push(serial);
     }
@@ -273,7 +260,7 @@ impl XdgShellHandler for WLCState {
         _surface: ToplevelSurface,
         _seat: WlSeat,
         serial: Serial,
-        edges: ResizeEdge
+        edges: ResizeEdge,
     ) {
         self.requests.resize_interactive.push((serial, edges));
     }
@@ -292,15 +279,13 @@ impl WLCClient {
 }
 
 impl ClientData for WLCClient {
-    fn initialized(&self, _id: ClientId) {
-    }
+    fn initialized(&self, _id: ClientId) {}
 
-    fn disconnected(&self, _id: ClientId, _reason: DisconnectReason) {
-    }
+    fn disconnected(&self, _id: ClientId, _reason: DisconnectReason) {}
 }
 
 pub(crate) fn wlc_init(
-    egl: EGLHelper
+    egl: EGLHelper,
 ) -> Result<WaylandCraft<'static>, Box<dyn std::error::Error>> {
     let event_loop: EventLoop<WLCState> = EventLoop::try_new()?;
     let display: Display<WLCState> = Display::new()?;
@@ -311,20 +296,29 @@ pub(crate) fn wlc_init(
 
     let ev_handle = event_loop.handle();
 
-    ev_handle.insert_source(socket, |stream, _, state| {
-        let client = WLCClient::new();
-        state.display_handle.insert_client(stream, Arc::new(client)).unwrap();
-    }).unwrap();
+    ev_handle
+        .insert_source(socket, |stream, _, state| {
+            let client = WLCClient::new();
+            state
+                .display_handle
+                .insert_client(stream, Arc::new(client))
+                .unwrap();
+        })
+        .unwrap();
 
     let display_source = GenericEvent::new(
-        display, calloop::Interest::READ, calloop::Mode::Level
+        display,
+        calloop::Interest::READ,
+        calloop::Mode::Level,
     );
-    ev_handle.insert_source(display_source, |_, display_io, state| {
-        unsafe {
-            display_io.get_mut().dispatch_clients(state).unwrap();
-        }
-        Ok(calloop::PostAction::Continue)
-    }).unwrap();
+    ev_handle
+        .insert_source(display_source, |_, display_io, state| {
+            unsafe {
+                display_io.get_mut().dispatch_clients(state).unwrap();
+            }
+            Ok(calloop::PostAction::Continue)
+        })
+        .unwrap();
 
     let xdg = XDGSpecHelper::init();
 

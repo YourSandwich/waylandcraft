@@ -1,26 +1,21 @@
-use std::sync::{Arc, Mutex};
-use std::ops::DerefMut;
-use std::os::fd::AsFd;
 use crate::WLCState;
-use crate::utils::{new_serial, get_time, to_fixed2};
-use smithay::{
-    reexports::{
-        wayland_server::{
-            protocol::{
-                wl_data_device_manager::self as wl_ddm,
-                wl_data_device_manager::WlDataDeviceManager as WlDDM,
-                wl_data_device_manager::DndAction,
-                wl_data_source::{self, WlDataSource},
-                wl_data_device::{self, WlDataDevice},
-                wl_data_offer::{self, WlDataOffer},
-                wl_surface::WlSurface,
-            },
-            backend::ClientId,
-            DisplayHandle, DataInit, New, GlobalDispatch, Dispatch, Client,
-            Resource,
-        },
+use crate::utils::{get_time, new_serial, to_fixed2};
+use smithay::reexports::wayland_server::{
+    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
+    backend::ClientId,
+    protocol::{
+        wl_data_device::{self, WlDataDevice},
+        wl_data_device_manager as wl_ddm,
+        wl_data_device_manager::DndAction,
+        wl_data_device_manager::WlDataDeviceManager as WlDDM,
+        wl_data_offer::{self, WlDataOffer},
+        wl_data_source::{self, WlDataSource},
+        wl_surface::WlSurface,
     },
 };
+use std::ops::DerefMut;
+use std::os::fd::AsFd;
+use std::sync::{Arc, Mutex};
 
 pub struct WLCDataState {
     pub devices: Vec<WlDataDevice>,
@@ -74,37 +69,28 @@ struct WLCDataDeviceData {
 }
 
 fn with_source_data<F, R>(source: &WlDataSource, f: F) -> R
-    where F: FnOnce(&mut WLCDataSourceData) -> R
+where
+    F: FnOnce(&mut WLCDataSourceData) -> R,
 {
-    let mut guard = source
-        .data::<WLCDataSource>()
-        .unwrap()
-        .lock()
-        .unwrap();
+    let mut guard = source.data::<WLCDataSource>().unwrap().lock().unwrap();
     let data = guard.deref_mut();
     f(data)
 }
 
 fn with_offer_data<F, R>(offer: &WlDataOffer, f: F) -> R
-    where F: FnOnce(&mut WLCDataOfferData) -> R
+where
+    F: FnOnce(&mut WLCDataOfferData) -> R,
 {
-    let mut guard = offer
-        .data::<WLCDataOffer>()
-        .unwrap()
-        .lock()
-        .unwrap();
+    let mut guard = offer.data::<WLCDataOffer>().unwrap().lock().unwrap();
     let data = guard.deref_mut();
     f(data)
 }
 
 fn with_device_data<F, R>(device: &WlDataDevice, f: F) -> R
-    where F: FnOnce(&mut WLCDataDeviceData) -> R
+where
+    F: FnOnce(&mut WLCDataDeviceData) -> R,
 {
-    let mut guard = device
-        .data::<WLCDataDevice>()
-        .unwrap()
-        .lock()
-        .unwrap();
+    let mut guard = device.data::<WLCDataDevice>().unwrap().lock().unwrap();
     let data = guard.deref_mut();
     f(data)
 }
@@ -121,7 +107,8 @@ impl WLCDataState {
     }
 
     pub fn create_global(&self) {
-        self.display_handle.create_global::<WLCState, WlDDM, ()>(3, ());
+        self.display_handle
+            .create_global::<WLCState, WlDDM, ()>(3, ());
     }
 
     pub fn update_clipboard_client(&mut self, client: Option<Client>) {
@@ -135,7 +122,9 @@ impl WLCDataState {
     fn send_clipboard(&self) {
         let client = match &self.clipboard_focus {
             Some(c) => c,
-            None => {return;},
+            None => {
+                return;
+            }
         };
         for device in &self.devices {
             if !device.client().is_some_and(|c| c == *client) {
@@ -148,9 +137,13 @@ impl WLCDataState {
                     device: device.clone(),
                 };
                 let offer_data = Arc::new(Mutex::new(offer_data));
-                let offer = client.create_resource::<
-                    WlDataOffer, WLCDataOffer, WLCState
-                >(&self.display_handle, device.version(), offer_data).unwrap();
+                let offer = client
+                    .create_resource::<WlDataOffer, WLCDataOffer, WLCState>(
+                        &self.display_handle,
+                        device.version(),
+                        offer_data,
+                    )
+                    .unwrap();
 
                 device.data_offer(&offer);
                 with_source_data(&clipboard, |data| {
@@ -183,7 +176,9 @@ impl WLCDataState {
 
     pub fn check_dnd_request(&mut self) -> Option<u32> {
         let dnd = self.dnd.as_mut()?;
-        if dnd.request_sent { return None; }
+        if dnd.request_sent {
+            return None;
+        }
         dnd.request_sent = true;
         Some(dnd.start_serial)
     }
@@ -191,8 +186,12 @@ impl WLCDataState {
     pub fn dnd_motion(&mut self, surface: Option<WlSurface>, x: f64, y: f64) {
         self.print_dnd_debug("dnd motion");
 
-        if self.dnd.is_none() { return }
-        if self.dnd.as_ref().unwrap().dropped { return }
+        if self.dnd.is_none() {
+            return;
+        }
+        if self.dnd.as_ref().unwrap().dropped {
+            return;
+        }
         let source = self.dnd.as_ref().unwrap().source.clone();
         let focus = self.dnd.as_ref().unwrap().focus.clone();
 
@@ -207,7 +206,7 @@ impl WLCDataState {
         self.for_all_devices(|device, data| {
             let focus = match &data.dnd_focus {
                 Some(s) => s,
-                None => { return }
+                None => return,
             };
             let unfocus = match &surface {
                 Some(s) => s != focus,
@@ -221,18 +220,22 @@ impl WLCDataState {
 
         let surface = match surface {
             Some(s) => s,
-            None => { return }
+            None => return,
         };
 
         // Send device enter events
         self.for_all_devices(|device, data| {
             // Already focused
-            if data.dnd_focus.is_some() { return }
+            if data.dnd_focus.is_some() {
+                return;
+            }
 
             // Check if client does not own surface
             let surface_client = surface.client().unwrap();
             let device_client = device.client().unwrap();
-            if surface_client != device_client { return }
+            if surface_client != device_client {
+                return;
+            }
 
             // Create offer
             let offer_data = WLCDataOfferData {
@@ -240,9 +243,13 @@ impl WLCDataState {
                 device: device.clone(),
             };
             let offer_data = Arc::new(Mutex::new(offer_data));
-            let offer = device_client.create_resource::<
-                WlDataOffer, WLCDataOffer, WLCState
-            >(&self.display_handle, device.version(), offer_data).unwrap();
+            let offer = device_client
+                .create_resource::<WlDataOffer, WLCDataOffer, WLCState>(
+                    &self.display_handle,
+                    device.version(),
+                    offer_data,
+                )
+                .unwrap();
             data.dnd_offer = Some(offer.clone());
 
             // Send offer to client
@@ -265,8 +272,12 @@ impl WLCDataState {
 
         // Send device motion events
         self.for_all_devices(|device, data| {
-            if !data.dnd_focus.is_some() { return }
-            if data.last_dnd_motion == Some(pos) { return }
+            if !data.dnd_focus.is_some() {
+                return;
+            }
+            if data.last_dnd_motion == Some(pos) {
+                return;
+            }
 
             device.motion(time, x, y);
             data.last_dnd_motion = Some(pos);
@@ -277,9 +288,11 @@ impl WLCDataState {
         self.print_dnd_debug("dnd drop");
         let dnd = match &mut self.dnd {
             Some(d) => d,
-            None => { return }
+            None => return,
         };
-        if dnd.dropped { return }
+        if dnd.dropped {
+            return;
+        }
         dnd.dropped = true;
 
         let action = dnd.action;
@@ -292,7 +305,9 @@ impl WLCDataState {
         dnd.source.dnd_drop_performed();
 
         self.for_all_devices(|device, data| {
-            if data.dnd_focus.is_none() { return }
+            if data.dnd_focus.is_none() {
+                return;
+            }
             data.dnd_focus = None;
             data.dnd_offer.as_ref().unwrap().action(action);
             device.drop();
@@ -304,7 +319,7 @@ impl WLCDataState {
         self.for_all_devices(|device, data| {
             match data.dnd_focus.take() {
                 Some(_) => (),
-                None => { return }
+                None => return,
             };
             device.leave();
         });
@@ -314,14 +329,15 @@ impl WLCDataState {
         self.print_dnd_debug("dnd cancel");
         let dnd = match &self.dnd {
             Some(d) => d,
-            None => { return }
+            None => return,
         };
         dnd.source.cancelled();
         self.unfocus_devices();
     }
 
     fn for_all_devices<F>(&self, mut f: F)
-        where F: FnMut(&WlDataDevice, &mut WLCDataDeviceData)
+    where
+        F: FnMut(&WlDataDevice, &mut WLCDataDeviceData),
     {
         for device in &self.devices {
             with_device_data(device, |data| f(device, data));
@@ -361,7 +377,7 @@ impl Dispatch<WlDDM, ()> for WLCState {
                 };
                 let source_data = Arc::new(Mutex::new(source_data));
                 let _source = data_init.init(id, source_data.clone());
-            },
+            }
             wl_ddm::Request::GetDataDevice { id, .. } => {
                 let device_data = WLCDataDeviceData {
                     dnd_focus: None,
@@ -372,7 +388,7 @@ impl Dispatch<WlDDM, ()> for WLCState {
                 let device = data_init.init(id, device_data.clone());
 
                 state.data.devices.push(device);
-            },
+            }
             _ => unreachable!(),
         }
     }
@@ -393,22 +409,22 @@ impl Dispatch<WlDataSource, WLCDataSource> for WLCState {
                 with_source_data(source, |data| {
                     data.mime.push(mime_type);
                 });
-            },
+            }
             wl_data_source::Request::Destroy => {
                 let dnd = match &state.data.dnd {
                     Some(d) => d,
-                    None => { return }
+                    None => return,
                 };
                 if *source == dnd.source {
                     state.data.print_dnd_debug("data source destroy");
                     state.data.unfocus_devices();
                     state.data.dnd = None;
                 }
-            },
+            }
             wl_data_source::Request::SetActions { dnd_actions } => {
                 let actions = match dnd_actions.into_result() {
                     Ok(a) => a,
-                    Err(_) => { return }
+                    Err(_) => return,
                 };
 
                 with_source_data(source, |data| {
@@ -416,16 +432,17 @@ impl Dispatch<WlDataSource, WLCDataSource> for WLCState {
                 });
 
                 state.data.for_all_devices(|_device, data| {
-                    if data.dnd_offer.is_none() { return }
+                    if data.dnd_offer.is_none() {
+                        return;
+                    }
                     let offer = data.dnd_offer.as_ref().unwrap();
-                    let matches_source = with_offer_data(offer, |data| {
-                        data.source == *source
-                    });
+                    let matches_source =
+                        with_offer_data(offer, |data| data.source == *source);
                     if matches_source {
                         offer.source_actions(actions);
                     }
                 });
-            },
+            }
             _ => unreachable!(),
         }
     }
@@ -439,7 +456,9 @@ impl Dispatch<WlDataSource, WLCDataSource> for WLCState {
         if state.data.clipboard.as_ref().is_some_and(|c| c == source) {
             state.data.clipboard = None;
         }
-        if let Some(dnd) = &state.data.dnd && *source == dnd.source {
+        if let Some(dnd) = &state.data.dnd
+            && *source == dnd.source
+        {
             state.data.unfocus_devices();
             state.data.dnd = None;
         }
@@ -457,10 +476,15 @@ impl Dispatch<WlDataDevice, WLCDataDevice> for WLCState {
         _data_init: &mut DataInit<'_, Self>,
     ) {
         match request {
-            wl_data_device::Request::StartDrag { source, serial, icon, .. } => {
+            wl_data_device::Request::StartDrag {
+                source,
+                serial,
+                icon,
+                ..
+            } => {
                 let source = match &source {
                     Some(s) => s,
-                    None => { return }
+                    None => return,
                 };
 
                 with_source_data(source, |data| {
@@ -492,7 +516,7 @@ impl Dispatch<WlDataDevice, WLCDataDevice> for WLCState {
                     action: DndAction::None,
                     dropped: false,
                 });
-            },
+            }
             wl_data_device::Request::SetSelection { source, serial: _ } => {
                 let focus = state.data.clipboard_focus.as_ref();
                 if !focus.is_some_and(|c| c == client) {
@@ -500,9 +524,8 @@ impl Dispatch<WlDataDevice, WLCDataDevice> for WLCState {
                 }
 
                 if let Some(source) = &source {
-                    let mime = with_source_data(source, |data| {
-                        data.mime.clone()
-                    });
+                    let mime =
+                        with_source_data(source, |data| data.mime.clone());
 
                     // STOP SENDING ME EMPTY CLIPBOARD SELECTIONS WITH THE
                     // SAVE_TARGETS MIME. I HAVE NO CLUE WHAT THAT IS.
@@ -528,8 +551,8 @@ impl Dispatch<WlDataDevice, WLCDataDevice> for WLCState {
                 }
                 state.data.clipboard = source;
                 state.data.send_clipboard();
-            },
-            wl_data_device::Request::Release => {},
+            }
+            wl_data_device::Request::Release => {}
             _ => unreachable!(),
         }
     }
@@ -571,18 +594,20 @@ impl Dispatch<WlDataOffer, WLCDataOffer> for WLCState {
 
                     data.source.send(mime_type, fd.as_fd());
                 });
-            },
+            }
             wl_data_offer::Request::Accept { mime_type, .. } => {
                 let dnd = match &mut state.data.dnd {
                     Some(d) => d,
-                    None => { return }
+                    None => return,
                 };
                 with_offer_data(offer, |data| {
-                    if data.source != dnd.source { return }
+                    if data.source != dnd.source {
+                        return;
+                    }
                     data.source.target(mime_type.clone());
                     dnd.mime = mime_type;
                 });
-            },
+            }
             wl_data_offer::Request::Destroy => {
                 with_offer_data(offer, |data| {
                     with_device_data(&data.device, |dev| {
@@ -591,34 +616,32 @@ impl Dispatch<WlDataOffer, WLCDataOffer> for WLCState {
                         }
                     });
                 });
-            },
+            }
             wl_data_offer::Request::Finish => {
                 with_offer_data(offer, |data| {
                     data.source.dnd_finished();
                 });
-            },
+            }
             wl_data_offer::Request::SetActions {
                 dnd_actions,
-                preferred_action
+                preferred_action,
             } => {
                 let dnd_actions = match dnd_actions.into_result() {
                     Ok(a) => a,
-                    Err(_) => { return }
+                    Err(_) => return,
                 };
                 let preferred_action = match preferred_action.into_result() {
                     Ok(a) => a,
-                    Err(_) => { return }
+                    Err(_) => return,
                 };
 
                 let source_actions = with_offer_data(offer, |data| {
-                    with_source_data(&data.source, |sdata| {
-                        sdata.actions
-                    })
+                    with_source_data(&data.source, |sdata| sdata.actions)
                 });
 
                 let actions = dnd_actions & source_actions;
-                let action = if actions.contains(preferred_action) &&
-                    preferred_action != DndAction::Ask
+                let action = if actions.contains(preferred_action)
+                    && preferred_action != DndAction::Ask
                 {
                     preferred_action
                 } else {
@@ -635,13 +658,13 @@ impl Dispatch<WlDataOffer, WLCDataOffer> for WLCState {
 
                 let dnd = match state.data.dnd.as_mut() {
                     Some(d) => d,
-                    None => { return }
+                    None => return,
                 };
                 dnd.action = action;
 
                 offer.action(dnd.action);
                 dnd.source.action(dnd.action);
-            },
+            }
             _ => unreachable!(),
         }
     }

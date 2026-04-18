@@ -1,10 +1,10 @@
-use std::fs::File;
-use std::io::Read;
-use std::path::PathBuf;
 use resvg::{
     tiny_skia::{Color, PixmapMut, Transform},
     usvg::Tree,
 };
+use std::fs::File;
+use std::io::Read;
+use std::path::PathBuf;
 
 // Render svg file found at path to byte buffer data with resolution
 // width x height. data has to be a buffer of at least 4 * width * height.
@@ -12,7 +12,7 @@ pub fn render_svg(
     path: PathBuf,
     width: u32,
     height: u32,
-    data: *mut u8
+    data: *mut u8,
 ) -> Option<()> {
     let data_len = (width * height * 4) as usize;
     let data = unsafe { std::slice::from_raw_parts_mut(data, data_len) };

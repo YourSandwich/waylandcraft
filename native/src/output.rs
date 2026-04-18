@@ -1,15 +1,11 @@
 use crate::WLCState;
 use smithay::{
-    utils::{Size, Logical},
-    reexports::{
-        wayland_server::{
-            protocol::{
-                wl_output::{self, WlOutput},
-            },
-            DisplayHandle, DataInit, New, GlobalDispatch, Dispatch, Client,
-            Resource,
-        },
+    reexports::wayland_server::{
+        Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New,
+        Resource,
+        protocol::wl_output::{self, WlOutput},
     },
+    utils::{Logical, Size},
 };
 
 pub struct WLCOutput {
@@ -31,7 +27,8 @@ impl WLCOutput {
     }
 
     pub fn create_global(&self) {
-        self.display_handle.create_global::<WLCState, WlOutput, ()>(4, ());
+        self.display_handle
+            .create_global::<WLCState, WlOutput, ()>(4, ());
     }
 
     pub fn size(&self) -> Size<i32, Logical> {
@@ -73,13 +70,18 @@ impl GlobalDispatch<WlOutput, ()> for WLCState {
         let size = &state.output.size;
         output.mode(flags, size.w, size.h, 0);
 
+        let location = (0, 0);
+        let physical = (0, 0);
+
         output.geometry(
-            0, 0, // location
-            0, 0, // physical dimensions
-            wl_output::Subpixel::None, // subpixel
-            "Virtual".into(), // make
-            "Monitor".into(), // model
-            wl_output::Transform::Normal, // transform
+            location.0,
+            location.1,
+            physical.0,
+            physical.1,
+            wl_output::Subpixel::None,
+            "Virtual".into(),
+            "Monitor".into(),
+            wl_output::Transform::Normal,
         );
 
         if output.version() >= 4 {
@@ -105,7 +107,7 @@ impl Dispatch<WlOutput, ()> for WLCState {
         _data_init: &mut DataInit<'_, Self>,
     ) {
         match request {
-            wl_output::Request::Release => {},
+            wl_output::Request::Release => {}
             _ => unreachable!(),
         }
     }

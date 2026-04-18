@@ -1,23 +1,20 @@
 use crate::WLCState;
 use crate::utils::{get_time, new_serial, to_fixed2};
-use std::collections::HashSet;
-use std::ffi::CString;
-use std::sync::{Arc, Mutex};
-use std::ops::DerefMut;
-use std::os::fd::AsFd;
 use smithay::{
-    utils::SealedFile,
     reexports::{
-        wayland_server::{
-            backend::{ClientId},
-            protocol::{
-                wl_surface::WlSurface,
-                wl_seat::{self, WlSeat},
-                wl_pointer::{self, WlPointer, ButtonState, Axis},
-                wl_keyboard::{self, WlKeyboard, KeymapFormat, KeyState},
-            },
-            DisplayHandle, Client, GlobalDispatch, Dispatch, New, DataInit,
-            Resource,
+        wayland_protocols::wp::cursor_shape::v1::server::{
+            wp_cursor_shape_device_v1,
+            wp_cursor_shape_device_v1::WpCursorShapeDeviceV1,
+            wp_cursor_shape_manager_v1,
+            wp_cursor_shape_manager_v1::WpCursorShapeManagerV1,
+        },
+        wayland_protocols::wp::pointer_constraints::zv1::server::{
+            zwp_confined_pointer_v1 as zwp_confined,
+            zwp_confined_pointer_v1::ZwpConfinedPointerV1,
+            zwp_locked_pointer_v1 as zwp_locked,
+            zwp_locked_pointer_v1::ZwpLockedPointerV1,
+            zwp_pointer_constraints_v1 as zwp_constraints,
+            zwp_pointer_constraints_v1::ZwpPointerConstraintsV1,
         },
         wayland_protocols::wp::relative_pointer::zv1::server::{
             zwp_relative_pointer_manager_v1 as zwp_rpm,
@@ -25,22 +22,25 @@ use smithay::{
             zwp_relative_pointer_v1 as zwp_relpointer,
             zwp_relative_pointer_v1::ZwpRelativePointerV1,
         },
-        wayland_protocols::wp::pointer_constraints::zv1::server::{
-            zwp_pointer_constraints_v1 as zwp_constraints,
-            zwp_pointer_constraints_v1::ZwpPointerConstraintsV1,
-            zwp_locked_pointer_v1 as zwp_locked,
-            zwp_locked_pointer_v1::ZwpLockedPointerV1,
-            zwp_confined_pointer_v1 as zwp_confined,
-            zwp_confined_pointer_v1::ZwpConfinedPointerV1,
-        },
-        wayland_protocols::wp::cursor_shape::v1::server::{
-            wp_cursor_shape_manager_v1,
-            wp_cursor_shape_manager_v1::WpCursorShapeManagerV1,
-            wp_cursor_shape_device_v1,
-            wp_cursor_shape_device_v1::WpCursorShapeDeviceV1,
+        wayland_server::{
+            Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New,
+            Resource,
+            backend::ClientId,
+            protocol::{
+                wl_keyboard::{self, KeyState, KeymapFormat, WlKeyboard},
+                wl_pointer::{self, Axis, ButtonState, WlPointer},
+                wl_seat::{self, WlSeat},
+                wl_surface::WlSurface,
+            },
         },
     },
+    utils::SealedFile,
 };
+use std::collections::HashSet;
+use std::ffi::CString;
+use std::ops::DerefMut;
+use std::os::fd::AsFd;
+use std::sync::{Arc, Mutex};
 use xkbcommon::xkb::{self, Keymap};
 
 pub struct WLCSeatState {
@@ -104,22 +104,20 @@ pub struct RMLVO {
 }
 
 fn with_pointer_data<F, R>(pointer: &WlPointer, f: F) -> R
-    where F: FnOnce(&mut WLCPointerData) -> R
+where
+    F: FnOnce(&mut WLCPointerData) -> R,
 {
-    let mut guard = pointer
-        .data::<WLCPointer>()
-        .unwrap()
-        .lock()
-        .unwrap();
+    let mut guard = pointer.data::<WLCPointer>().unwrap().lock().unwrap();
     let data = guard.deref_mut();
     f(data)
 }
 
 fn with_cursor_shape_device_data<F, R>(
     device: &WpCursorShapeDeviceV1,
-    f: F
+    f: F,
 ) -> R
-    where F: FnOnce(&mut WLCCursorShapeDeviceData) -> R
+where
+    F: FnOnce(&mut WLCCursorShapeDeviceData) -> R,
 {
     let mut guard = device
         .data::<WLCCursorShapeDevice>()
@@ -131,13 +129,10 @@ fn with_cursor_shape_device_data<F, R>(
 }
 
 fn with_keyboard_data<F>(keyboard: &WlKeyboard, f: F)
-    where F: FnOnce(&mut WLCKeyboardData)
+where
+    F: FnOnce(&mut WLCKeyboardData),
 {
-    let mut guard = keyboard
-        .data::<WLCKeyboard>()
-        .unwrap()
-        .lock()
-        .unwrap();
+    let mut guard = keyboard.data::<WLCKeyboard>().unwrap().lock().unwrap();
     let data = guard.deref_mut();
     f(data);
 }
@@ -146,8 +141,9 @@ fn create_keymap_file(keymap: &Keymap) -> SealedFile {
     let keymap_str = keymap.get_as_string(xkb::KEYMAP_FORMAT_TEXT_V1);
     SealedFile::with_content(
         c"waylandcraft-keymap",
-        &CString::new(keymap_str.as_str()).unwrap()
-    ).expect("SealedFile create")
+        &CString::new(keymap_str.as_str()).unwrap(),
+    )
+    .expect("SealedFile create")
 }
 
 impl WLCSeatState {
@@ -155,13 +151,14 @@ impl WLCSeatState {
         let xkb_context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
         let keymap = Keymap::new_from_names(
             &xkb_context,
-            "", // rules
-            "", // model
-            "", // layout
-            "", // variant
-            None, // options
+            "",                           // rules
+            "",                           // model
+            "",                           // layout
+            "",                           // variant
+            None,                         // options
             xkb::KEYMAP_COMPILE_NO_FLAGS, // flags
-        ).expect("default keymap create");
+        )
+        .expect("default keymap create");
 
         let xkb_state = xkb::State::new(&keymap);
         let keymap_file = create_keymap_file(&keymap);
@@ -195,7 +192,7 @@ impl WLCSeatState {
     fn pointer_focus_eq(
         &self,
         pointer: &WLCPointerData,
-        surface: &WlSurface
+        surface: &WlSurface,
     ) -> bool {
         pointer.focus.as_ref().is_some_and(|s| s == surface)
     }
@@ -207,7 +204,7 @@ impl WLCSeatState {
         self.for_all_pointers(|pointer, data| {
             let focus = match &data.focus {
                 Some(s) => s,
-                None => { return },
+                None => return,
             };
             let unfocus = match surface {
                 Some(s) => s != focus,
@@ -224,17 +221,21 @@ impl WLCSeatState {
 
         let surface = match surface {
             Some(s) => s,
-            None => { return },
+            None => return,
         };
 
         // Generate pointer enter events
         self.for_all_pointers(|pointer, data| {
             // Already correct focus
-            if self.pointer_focus_eq(data, surface) { return }
+            if self.pointer_focus_eq(data, surface) {
+                return;
+            }
             assert_eq!(data.focus, None);
 
             // Client does not own surface
-            if surface.client() != pointer.client() { return }
+            if surface.client() != pointer.client() {
+                return;
+            }
 
             pointer.enter(serial, surface, x, y);
             self.pointer_frame(pointer);
@@ -249,12 +250,14 @@ impl WLCSeatState {
         &mut self,
         surface: Option<WlSurface>,
         x: f64,
-        y: f64
+        y: f64,
     ) {
         let surface = surface.filter(|s| s.is_alive());
 
         self.pointer_focus(surface.as_ref(), x, y);
-        if surface.is_none() { return }
+        if surface.is_none() {
+            return;
+        }
 
         self.pointer_motion(x, y);
     }
@@ -265,9 +268,13 @@ impl WLCSeatState {
         let pos: (i32, i32) = to_fixed2(x, y);
         self.for_all_pointers(|pointer, data| {
             // Pointer does not hold focus
-            if !data.focus.is_some() { return }
+            if !data.focus.is_some() {
+                return;
+            }
             // Pointer location did not change
-            if data.last_motion == Some(pos) { return }
+            if data.last_motion == Some(pos) {
+                return;
+            }
 
             pointer.motion(time, x, y);
             self.pointer_frame(pointer);
@@ -278,14 +285,18 @@ impl WLCSeatState {
     // Emit relative movement on the surface with active pointer focus
     pub fn pointer_relative_motion(&self, dx: f64, dy: f64) {
         self.for_all_pointers(|_pointer, data| {
-            if !data.focus.is_some() { return }
+            if !data.focus.is_some() {
+                return;
+            }
             for relative_pointer in &data.relative_pointers {
                 let time = (get_time() as u64) * 1000; // ms to µs
                 relative_pointer.relative_motion(
-                    (time >> 32) as u32, // utime_hi
+                    (time >> 32) as u32,        // utime_hi
                     (time & 0xffffffff) as u32, // utime_lo
-                    dx, dy, // dx, dy
-                    dx, dy // dx_unaccel, dy_unaccel
+                    dx,                         // dx
+                    dy,                         // dy
+                    dx,                         // dx_unaccel
+                    dy,                         // dy_unaccel
                 );
             }
         });
@@ -294,7 +305,9 @@ impl WLCSeatState {
     pub fn pointer_button(&mut self, button: u32, state: ButtonState) -> u32 {
         let serial = new_serial();
         self.for_all_pointers(|pointer, data| {
-            if !data.focus.is_some() { return }
+            if !data.focus.is_some() {
+                return;
+            }
 
             pointer.button(serial, get_time(), button, state);
             self.pointer_frame(pointer);
@@ -327,7 +340,9 @@ impl WLCSeatState {
     }
 
     pub fn keyboard_focus(&mut self, surface: WlSurface) {
-        if !surface.is_alive() { return };
+        if !surface.is_alive() {
+            return;
+        };
         let client = surface.client().unwrap();
         let serial = new_serial();
 
@@ -371,10 +386,8 @@ impl WLCSeatState {
             pressed = self.pressed_keys.iter().copied().collect();
         }
 
-        let pressed: Vec<u8> = pressed
-            .iter()
-            .flat_map(|&k| k.to_ne_bytes())
-            .collect();
+        let pressed: Vec<u8> =
+            pressed.iter().flat_map(|&k| k.to_ne_bytes()).collect();
 
         pressed
     }
@@ -383,7 +396,9 @@ impl WLCSeatState {
         let serial = new_serial();
         self.for_all_keyboards(|keyboard, data| {
             if let Some(focus) = &data.focus {
-                if !focus.is_alive() { return }
+                if !focus.is_alive() {
+                    return;
+                }
 
                 let pressed = self.serialize_pressed_keys();
                 keyboard.leave(serial, focus);
@@ -394,14 +409,18 @@ impl WLCSeatState {
     }
 
     pub fn activate_keyboard(&mut self) {
-        if self.kb_active { return }
+        if self.kb_active {
+            return;
+        }
 
         self.kb_active = true;
         self.keyboard_refocus();
     }
 
     pub fn deactivate_keyboard(&mut self) {
-        if !self.kb_active { return }
+        if !self.kb_active {
+            return;
+        }
 
         self.kb_active = false;
         self.keyboard_refocus();
@@ -414,7 +433,7 @@ impl WLCSeatState {
                 0, // MODS_DEPRESSED
                 0, // MODS_LATCHED
                 0, // MODS_LOCKED
-                self.xkb_state.serialize_layout(xkb::STATE_LAYOUT_EFFECTIVE)
+                self.xkb_state.serialize_layout(xkb::STATE_LAYOUT_EFFECTIVE),
             );
             return;
         }
@@ -423,7 +442,7 @@ impl WLCSeatState {
             self.xkb_state.serialize_mods(xkb::STATE_MODS_DEPRESSED),
             self.xkb_state.serialize_mods(xkb::STATE_MODS_LATCHED),
             self.xkb_state.serialize_mods(xkb::STATE_MODS_LOCKED),
-            self.xkb_state.serialize_layout(xkb::STATE_LAYOUT_EFFECTIVE)
+            self.xkb_state.serialize_layout(xkb::STATE_LAYOUT_EFFECTIVE),
         );
     }
 
@@ -438,7 +457,9 @@ impl WLCSeatState {
     }
 
     pub fn keyboard_key(&self, key: u32, state: KeyState) {
-        if !self.kb_active { return }
+        if !self.kb_active {
+            return;
+        }
         let serial = new_serial();
         self.for_all_keyboards(|keyboard, data| {
             if data.focus.is_some() {
@@ -487,7 +508,8 @@ impl WLCSeatState {
     }
 
     fn for_all_pointers<F>(&self, mut f: F)
-        where F: FnMut(&WlPointer, &mut WLCPointerData)
+    where
+        F: FnMut(&WlPointer, &mut WLCPointerData),
     {
         for pointer in &self.pointers {
             with_pointer_data(pointer, |data| f(pointer, data));
@@ -495,7 +517,8 @@ impl WLCSeatState {
     }
 
     fn for_all_keyboards<F>(&self, mut f: F)
-        where F: FnMut(&WlKeyboard, &mut WLCKeyboardData)
+    where
+        F: FnMut(&WlKeyboard, &mut WLCKeyboardData),
     {
         for keyboard in &self.keyboards {
             with_keyboard_data(keyboard, |data| f(keyboard, data));
@@ -515,13 +538,14 @@ impl WLCSeatState {
     pub fn change_keymap_to_default(&mut self) {
         let keymap = Keymap::new_from_names(
             &self.xkb_context,
-            "", // rules
-            "", // model
-            "", // layout
-            "", // variant
-            None, // options
+            "",                           // rules
+            "",                           // model
+            "",                           // layout
+            "",                           // variant
+            None,                         // options
             xkb::KEYMAP_COMPILE_NO_FLAGS, // flags
-        ).expect("default keymap create");
+        )
+        .expect("default keymap create");
         self.change_keymap(keymap);
     }
 
@@ -537,7 +561,7 @@ impl WLCSeatState {
         );
         let keymap = match keymap {
             Some(k) => k,
-            None => { return false },
+            None => return false,
         };
         self.change_keymap(keymap);
         true
@@ -552,7 +576,7 @@ impl WLCSeatState {
         );
         let keymap = match keymap {
             Some(k) => k,
-            None => { return false },
+            None => return false,
         };
         self.change_keymap(keymap);
         true
@@ -608,11 +632,9 @@ impl Dispatch<WlSeat, ()> for WLCState {
                     data_init.init(id, pointer_data.clone());
 
                 state.seat.pointers.push(pointer);
-            },
+            }
             wl_seat::Request::GetKeyboard { id } => {
-                let keyboard_data = WLCKeyboardData {
-                    focus: None,
-                };
+                let keyboard_data = WLCKeyboardData { focus: None };
                 let keyboard_data = Arc::new(Mutex::new(keyboard_data));
 
                 let keyboard: WlKeyboard =
@@ -624,17 +646,17 @@ impl Dispatch<WlSeat, ()> for WLCState {
                 keyboard.keymap(
                     KeymapFormat::XkbV1,
                     keymap.as_fd(),
-                    keymap.size() as u32
+                    keymap.size() as u32,
                 );
 
                 keyboard.repeat_info(25, 200);
-            },
+            }
             _ => {
                 seat_resource.post_error(
                     wl_seat::Error::MissingCapability,
                     "accessed missing seat capability",
                 );
-            },
+            }
         }
     }
 }
@@ -650,12 +672,17 @@ impl Dispatch<WlPointer, WLCPointer> for WLCState {
         _data_init: &mut DataInit<'_, Self>,
     ) {
         match request {
-            wl_pointer::Request::SetCursor { serial, surface, .. } => {
-                let last_enter = with_pointer_data(pointer, |data| {
-                    data.last_enter
-                });
-                if last_enter.is_none() { return }
-                if last_enter.unwrap() != serial { return }
+            wl_pointer::Request::SetCursor {
+                serial, surface, ..
+            } => {
+                let last_enter =
+                    with_pointer_data(pointer, |data| data.last_enter);
+                if last_enter.is_none() {
+                    return;
+                }
+                if last_enter.unwrap() != serial {
+                    return;
+                }
 
                 if surface.is_none() {
                     // Attaching an empty surface to hide cursor
@@ -667,8 +694,8 @@ impl Dispatch<WlPointer, WLCPointer> for WLCState {
                     // surface-based cursors, only cursor-shape.
                     state.seat.cursor_shape = None;
                 }
-            },
-            wl_pointer::Request::Release => {},
+            }
+            wl_pointer::Request::Release => {}
             _ => unreachable!(),
         }
     }
@@ -694,7 +721,7 @@ impl Dispatch<WlKeyboard, WLCKeyboard> for WLCState {
         _data_init: &mut DataInit<'_, Self>,
     ) {
         match request {
-            wl_keyboard::Request::Release => {},
+            wl_keyboard::Request::Release => {}
             _ => unreachable!(),
         }
     }
@@ -733,14 +760,14 @@ impl Dispatch<ZwpRelativePointerManagerV1, ()> for WLCState {
         data_init: &mut DataInit<'_, Self>,
     ) {
         match request {
-            zwp_rpm::Request::Destroy => {},
+            zwp_rpm::Request::Destroy => {}
             zwp_rpm::Request::GetRelativePointer { id, pointer } => {
                 let relative_pointer = data_init.init(id, ());
 
                 with_pointer_data(&pointer, |data| {
                     data.relative_pointers.push(relative_pointer);
                 });
-            },
+            }
             _ => unreachable!(),
         }
     }
@@ -757,7 +784,7 @@ impl Dispatch<ZwpRelativePointerV1, ()> for WLCState {
         _data_init: &mut DataInit<'_, Self>,
     ) {
         match request {
-            zwp_relpointer::Request::Destroy => {},
+            zwp_relpointer::Request::Destroy => {}
             _ => unreachable!(),
         }
     }
@@ -790,7 +817,7 @@ impl GlobalDispatch<ZwpPointerConstraintsV1, ()> for WLCState {
 fn has_existing_constraint(
     state: &mut WLCState,
     pointer: &WlPointer,
-    surface: &WlSurface
+    surface: &WlSurface,
 ) -> bool {
     let mut err = false;
     with_pointer_data(&pointer, |data| {
@@ -799,10 +826,14 @@ fn has_existing_constraint(
         }
     });
     state.seat.for_all_pointers(|_pointer, data| {
-        if let Some(lock) = &data.lock && lock.surface == *surface {
+        if let Some(lock) = &data.lock
+            && lock.surface == *surface
+        {
             err = true;
         }
-        if let Some(lsurf) = &data.confined && lsurf == surface {
+        if let Some(lsurf) = &data.confined
+            && lsurf == surface
+        {
             err = true;
         }
     });
@@ -820,14 +851,17 @@ impl Dispatch<ZwpPointerConstraintsV1, ()> for WLCState {
         data_init: &mut DataInit<'_, Self>,
     ) {
         match request {
-            zwp_constraints::Request::Destroy => {},
+            zwp_constraints::Request::Destroy => {}
             zwp_constraints::Request::LockPointer {
-                id, surface, pointer, ..
+                id,
+                surface,
+                pointer,
+                ..
             } => {
                 if has_existing_constraint(state, &pointer, &surface) {
                     resource.post_error(
                         zwp_constraints::Error::AlreadyConstrained,
-                        "Pointer or surface already has attached constraint"
+                        "Pointer or surface already has attached constraint",
                     );
                     return;
                 }
@@ -841,14 +875,17 @@ impl Dispatch<ZwpPointerConstraintsV1, ()> for WLCState {
                         active: false,
                     });
                 });
-            },
+            }
             zwp_constraints::Request::ConfinePointer {
-                id, surface, pointer, ..
+                id,
+                surface,
+                pointer,
+                ..
             } => {
                 if has_existing_constraint(state, &pointer, &surface) {
                     resource.post_error(
                         zwp_constraints::Error::AlreadyConstrained,
-                        "Pointer or surface already has attached constraint"
+                        "Pointer or surface already has attached constraint",
                     );
                     return;
                 }
@@ -858,7 +895,7 @@ impl Dispatch<ZwpPointerConstraintsV1, ()> for WLCState {
                 });
 
                 let _confine_resource = data_init.init(id, pointer.clone());
-            },
+            }
             _ => unreachable!(),
         }
     }
@@ -875,9 +912,9 @@ impl Dispatch<ZwpLockedPointerV1, WlPointer> for WLCState {
         _data_init: &mut DataInit<'_, Self>,
     ) {
         match request {
-            zwp_locked::Request::Destroy => {},
-            zwp_locked::Request::SetCursorPositionHint { .. } => {},
-            zwp_locked::Request::SetRegion { .. } => {},
+            zwp_locked::Request::Destroy => {}
+            zwp_locked::Request::SetCursorPositionHint { .. } => {}
+            zwp_locked::Request::SetRegion { .. } => {}
             _ => unreachable!(),
         }
     }
@@ -905,8 +942,8 @@ impl Dispatch<ZwpConfinedPointerV1, WlPointer> for WLCState {
         _data_init: &mut DataInit<'_, Self>,
     ) {
         match request {
-            zwp_confined::Request::Destroy => {},
-            zwp_confined::Request::SetRegion { .. } => {},
+            zwp_confined::Request::Destroy => {}
+            zwp_confined::Request::SetRegion { .. } => {}
             _ => unreachable!(),
         }
     }
@@ -947,25 +984,25 @@ impl Dispatch<WpCursorShapeManagerV1, ()> for WLCState {
         data_init: &mut DataInit<'_, Self>,
     ) {
         match request {
-            wp_cursor_shape_manager_v1::Request::Destroy => {},
+            wp_cursor_shape_manager_v1::Request::Destroy => {}
             wp_cursor_shape_manager_v1::Request::GetPointer {
-                cursor_shape_device, pointer
+                cursor_shape_device,
+                pointer,
             } => {
                 let device_data = WLCCursorShapeDeviceData {
                     pointer: Some(pointer),
                 };
                 let device_data = Arc::new(Mutex::new(device_data));
                 data_init.init(cursor_shape_device, device_data);
-            },
+            }
             wp_cursor_shape_manager_v1::Request::GetTabletToolV2 {
-                cursor_shape_device, ..
+                cursor_shape_device,
+                ..
             } => {
-                let device_data = WLCCursorShapeDeviceData {
-                    pointer: None,
-                };
+                let device_data = WLCCursorShapeDeviceData { pointer: None };
                 let device_data = Arc::new(Mutex::new(device_data));
                 data_init.init(cursor_shape_device, device_data);
-            },
+            }
             _ => unreachable!(),
         }
     }
@@ -982,25 +1019,29 @@ impl Dispatch<WpCursorShapeDeviceV1, WLCCursorShapeDevice> for WLCState {
         _data_init: &mut DataInit<'_, Self>,
     ) {
         match request {
-            wp_cursor_shape_device_v1::Request::Destroy => {},
-            wp_cursor_shape_device_v1::Request::SetShape {
-                shape, serial
-            } => {
+            wp_cursor_shape_device_v1::Request::Destroy => {}
+            wp_cursor_shape_device_v1::Request::SetShape { shape, serial } => {
                 let pointer = with_cursor_shape_device_data(device, |data| {
                     data.pointer.clone()
                 });
 
-                if pointer.is_none() { return } // No tablet support
+                if pointer.is_none() {
+                    // No tablet support
+                    return;
+                }
                 let pointer = pointer.unwrap();
 
-                let last_enter = with_pointer_data(&pointer, |data| {
-                    data.last_enter
-                });
-                if last_enter.is_none() { return }
-                if last_enter.unwrap() != serial { return }
+                let last_enter =
+                    with_pointer_data(&pointer, |data| data.last_enter);
+                if last_enter.is_none() {
+                    return;
+                }
+                if last_enter.unwrap() != serial {
+                    return;
+                }
 
                 state.seat.cursor_shape = Some(shape.into());
-            },
+            }
             _ => unreachable!(),
         }
     }

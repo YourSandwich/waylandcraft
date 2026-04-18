@@ -1,5 +1,5 @@
-use std::process::{Command, Stdio};
 use std::ffi::OsString;
+use std::process::{Command, Stdio};
 
 pub fn spawn(
     cmd: String,
@@ -24,19 +24,27 @@ pub fn spawn(
     // Double-fork to run the executable.
     // Has to do with preventing zombie processes and such
     match unsafe { libc::fork() } {
-        0 => { // child process
-            unsafe { libc::setsid(); }
+        0 => {
+            // child process
+            unsafe {
+                libc::setsid();
+            }
             let _ = command.spawn();
-            unsafe { libc::_exit(0); }
-        },
-        -1 => { // fork failed
+            unsafe {
+                libc::_exit(0);
+            }
+        }
+        -1 => {
+            // fork failed
             return Err(());
-        },
+        }
         _ => { // parent process
-        },
+        }
     }
 
-    unsafe { libc::wait(std::ptr::null_mut()); }
+    unsafe {
+        libc::wait(std::ptr::null_mut());
+    }
 
     Ok(())
 }

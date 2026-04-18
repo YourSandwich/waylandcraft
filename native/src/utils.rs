@@ -1,5 +1,5 @@
-use std::time::{SystemTime, UNIX_EPOCH};
 use smithay::utils::SERIAL_COUNTER;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn new_serial() -> u32 {
     SERIAL_COUNTER.next_serial().into()
