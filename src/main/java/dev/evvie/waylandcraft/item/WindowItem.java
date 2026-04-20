@@ -46,6 +46,8 @@ public class WindowItem extends Item {
 	
 	@Nullable
 	public static WLCToplevel getToplevel(ItemStack item) {
+		if(item == null) return null;
+		
 		Long data = item.get(WINDOW_HANDLE);
 		if(data == null) return null;
 		

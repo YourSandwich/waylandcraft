@@ -14,7 +14,8 @@
 		"LocalPlayerMixin",
 		"GuiMixin",
 		"NativeImageMixin",
-		"ItemFrameRendererMixin"
+		"ItemFrameRendererMixin",
+		"ItemFrameRenderStateMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1
