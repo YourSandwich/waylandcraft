@@ -1,6 +1,7 @@
 package dev.evvie.waylandcraft.render;
 
 import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.math.Axis;
 
 import dev.evvie.waylandcraft.bridge.WLCToplevel;
 import net.minecraft.client.renderer.MultiBufferSource;
@@ -13,31 +14,36 @@ public class WindowInItemFrameRenderer {
 		if(toplevel.framebuffer == null) return;
 		
 		poseStack.pushPose();
-		poseStack.translate(-1.0f, -1.0f, -0.01f);
+		poseStack.translate(1.0f, 1.0f, -0.01f);
 		poseStack.scale(2.0f, 2.0f, 1.0f);
+		poseStack.rotateAround(Axis.ZP.rotationDegrees(180), 0, 0, 0);
 		
-		float width = toplevel.geometry.width();
-		float height = toplevel.geometry.height();
-		
-		float wscale;
-		float hscale;
+		int width = toplevel.geometry.width();
+		int height = toplevel.geometry.height();
+		int resolution;
 		
 		if(width > height) {
-			wscale = 1.0f;
-			hscale = height / width;
+			resolution = width;
 		}
 		else {
-			hscale = 1.0f;
-			wscale = width / height;
+			resolution = height;
 		}
 		
-		poseStack.translate(0.5f - wscale / 2, 0.5 - hscale / 2, 0.0f);
-		poseStack.scale(wscale, hscale, 1);
+		float scale = 1.0f / resolution;
+		poseStack.scale(scale, scale, 1.0f);
 		
-		Vec3 pos1 = new Vec3(1, 1, 0);
-		Vec3 pos2 = new Vec3(1, 0, 0);
-		Vec3 pos3 = new Vec3(0, 0, 0);
-		Vec3 pos4 = new Vec3(0, 1, 0);
+		int x = -toplevel.framebuffer.getXOff() - toplevel.geometry.x();
+		int y = -toplevel.framebuffer.getYOff() - toplevel.geometry.y();
+		int w = toplevel.framebuffer.getWidth();
+		int h = toplevel.framebuffer.getHeight();
+		
+		x += resolution / 2 - width / 2;
+		y += resolution / 2 - height / 2;
+		
+		Vec3 pos1 = new Vec3(x, y, 0);
+		Vec3 pos2 = new Vec3(x, y + h, 0);
+		Vec3 pos3 = new Vec3(x + w, y + h, 0);
+		Vec3 pos4 = new Vec3(x + w, y, 0);
 		
 		Vec2 uv1 = new Vec2(0, 0);
 		Vec2 uv2 = new Vec2(0, 1);
