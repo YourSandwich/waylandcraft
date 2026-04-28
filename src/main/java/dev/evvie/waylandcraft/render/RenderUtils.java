@@ -11,6 +11,7 @@ import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.mojang.blaze3d.vertex.VertexFormat;
 
 import dev.evvie.waylandcraft.WaylandCraft;
+import dev.evvie.waylandcraft.mixin.IGuiGraphics;
 import net.minecraft.Util;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
@@ -90,6 +91,15 @@ public class RenderUtils {
 		}
 	);
 	
+	public static final RenderPipeline WINDOW_BLIT = RenderPipeline.builder(RenderPipelines.MATRICES_PROJECTION_SNIPPET)
+			.withLocation(ResourceLocation.fromNamespaceAndPath(WaylandCraft.MOD_ID, "pipeline/window_blit"))
+			.withVertexShader(ResourceLocation.fromNamespaceAndPath(WaylandCraft.MOD_ID, "core/window_blit"))
+			.withFragmentShader(ResourceLocation.fromNamespaceAndPath(WaylandCraft.MOD_ID, "core/window_blit"))
+			.withSampler("Sampler0")
+			.withBlend(BlendFunction.TRANSLUCENT)
+			.withVertexFormat(DefaultVertexFormat.POSITION_TEX_COLOR, VertexFormat.Mode.QUADS)
+			.build();
+	
 	public static void renderFramebuffer(WindowFramebuffer framebuffer, boolean cutout, Pose pose, Vec3 pos1, Vec3 pos2, Vec3 pos3, Vec3 pos4, Vec2 uv1, Vec2 uv2, Vec2 uv3, Vec2 uv4) {
 		if(!framebuffer.isValid()) return;
 		
@@ -114,19 +124,7 @@ public class RenderUtils {
 	
 	public static void renderFramebuffer2D(GuiGraphics context, WindowFramebuffer framebuffer, int x, int y, int w, int h) {
 		if(!framebuffer.isValid()) return;
-		
-		context.blit(framebuffer.getTextureLocation(), x, y, x + w, y + h, 0.0f, 1.0f, 0.0f, 1.0f);
-		
-		/*
-		Matrix3x2f matrix = context.pose();
-		BufferSource source = Minecraft.getInstance().renderBuffers().bufferSource();
-		Function<ResourceLocation, RenderType> renderType = WINDOW_TRANSLUCENT;
-		VertexConsumer buffer = source.getBuffer(renderType.apply(framebuffer.getTextureLocation()));
-		buffer.addVertexWith2DPose(matrix, (float) pos1.x, (float) pos1.y, (float) pos1.z).setUv(uv1.x, uv1.y);
-		buffer.addVertexWith2DPose(matrix, (float) pos2.x, (float) pos2.y, (float) pos2.z).setUv(uv2.x, uv2.y);
-		buffer.addVertexWith2DPose(matrix, (float) pos3.x, (float) pos3.y, (float) pos3.z).setUv(uv3.x, uv3.y);
-		buffer.addVertexWith2DPose(matrix, (float) pos4.x, (float) pos4.y, (float) pos4.z).setUv(uv4.x, uv4.y);
-		*/
+		((IGuiGraphics) context).invokeInnerBlit(WINDOW_BLIT, framebuffer.getTextureLocation(), x, x + w, y, y + h, 0.0f, 1.0f, 0.0f, 1.0f, -1);
 	}
 	
 	public static void cameraTransform(PoseStack poseStack, Camera camera) {

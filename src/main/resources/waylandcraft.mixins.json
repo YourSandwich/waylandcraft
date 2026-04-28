@@ -16,7 +16,8 @@
 		"NativeImageMixin",
 		"ItemFrameRendererMixin",
 		"ItemFrameRenderStateMixin",
-		"IGlTextureMixin"
+		"IGlTextureMixin",
+		"IGuiGraphics"
 	],
 	"injectors": {
 		"defaultRequire": 1
