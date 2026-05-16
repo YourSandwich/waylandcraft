@@ -113,11 +113,10 @@ public class WindowFramebuffer {
 			return;
 		}
 		
+		if(width != prevWidth || height != prevHeight) destroy();
+		
 		if(target == null) {
 			target = new TextureTarget(name(), width, height, false);
-		}
-		else if(width != prevWidth || height != prevHeight) {
-			target.resize(width, height);
 		}
 		
 		if(texture == null) registerTexture();
