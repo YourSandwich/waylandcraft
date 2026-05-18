@@ -41,6 +41,13 @@ the windows using your controller. Soooo, kinda.
 ### Does this work with shaders?
 The windows are rendered into the world by themselves (not like blocks or entities) so a lot of shaders will break the functionality.
 
+## Common issues
+### Crash with `GLFW error: EGL: Failed to clear current context`
+Try setting the environment variable `__GL_THREADED_OPTIMIZATIONS=0` in your launcher.
+
+### Weird graphical issues
+Some users reported success by setting the `Improved Transparency` option in the game settings to enabled.
+
 ## Building and Running
 You need a Rust development environment and a Java 25 SDK.
 ```sh
