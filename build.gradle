@@ -26,6 +26,9 @@ dependencies {
 	// Fabric API. This is technically optional, but you probably want it anyway.
 	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
 
+	// Iris API for shader compatibility - compile-only; Iris provides it at runtime.
+	compileOnly files("libs/iris.jar")
+
 }
 
 processResources {

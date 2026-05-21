@@ -34,6 +34,7 @@ import dev.evvie.waylandcraft.gui.WaylandHudRenderer;
 import dev.evvie.waylandcraft.gui.WindowManagerScreen;
 import dev.evvie.waylandcraft.item.WindowItem;
 import dev.evvie.waylandcraft.item.WindowItemManager;
+import dev.evvie.waylandcraft.render.ShaderWindowPass;
 import dev.evvie.waylandcraft.render.WindowInHandRenderer;
 import dev.evvie.waylandcraft.render.WindowInItemFrameRenderer;
 import dev.evvie.waylandcraft.render.model.WindowItemModel;
@@ -129,6 +130,7 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 		
 		LevelRenderEvents.COLLECT_SUBMITS.register(this::renderWorld);
 		LevelRenderEvents.END_EXTRACTION.register(this::updateWorld);
+		ShaderWindowPass.register();
 		ClientTickEvents.END_CLIENT_TICK.register(this::onClientTick);
 		ServerTickEvents.START_LEVEL_TICK.register(itemManager::onServerTick);
 		ClientPlayConnectionEvents.JOIN.register(this::onClientJoin);
@@ -155,6 +157,7 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 	public void renderWorld(LevelRenderContext ctx) {
 		if(bridge == null) return;
 		
+		ShaderWindowPass.captureCamera(ctx.levelState().cameraRenderState.projectionMatrix, ctx.levelState().cameraRenderState.viewRotationMatrix);
 		displays.forEach((d) -> d.render(ctx));
 	}
 	

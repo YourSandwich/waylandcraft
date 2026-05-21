@@ -19,6 +19,7 @@ import com.mojang.blaze3d.vertex.VertexFormat;
 
 import dev.evvie.waylandcraft.WaylandCraft;
 import dev.evvie.waylandcraft.mixin.IGuiGraphicsExtractor;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.renderer.SubmitNodeCollector;
@@ -108,7 +109,16 @@ public class RenderUtils {
 			.withVertexFormat(DefaultVertexFormat.POSITION_TEX_COLOR, VertexFormat.Mode.QUADS)
 			.build();
 	
-	public static void renderFramebuffer(WindowFramebuffer framebuffer, PoseStack poseStack, SubmitNodeCollector collector, boolean cutout, Vec3 tl, Vec3 bl, Vec3 br, Vec3 tr) {
+	private static final boolean IRIS_LOADED = FabricLoader.getInstance().isModLoaded("iris");
+
+	public static void renderFramebuffer(WindowFramebuffer framebuffer, PoseStack poseStack, SubmitNodeCollector collector, boolean cutout, boolean viewSpace, Vec3 tl, Vec3 bl, Vec3 br, Vec3 tr) {
+		// Shaderpack active: collect for the post-composite pass instead of
+		// submitting through the world render (Iris would grade the colors).
+		if(IRIS_LOADED && IrisCompat.isShaderPackActive() && !IrisCompat.isShadowPass()) {
+			ShaderWindowPass.enqueue(framebuffer, poseStack.last().pose(), viewSpace, tl, bl, br, tr);
+			return;
+		}
+
 		Function<Identifier, RenderType> renderType;
 		
 		// Front quad

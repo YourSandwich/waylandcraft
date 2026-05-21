@@ -44,7 +44,7 @@ public class WindowInItemFrameRenderer {
 		Vec3 br = new Vec3(x + w, y + h, 0);
 		Vec3 tr = new Vec3(x + w, y, 0);
 		
-		RenderUtils.renderFramebuffer(toplevel.framebuffer, poseStack, collector, true, tl, bl, br, tr);
+		RenderUtils.renderFramebuffer(toplevel.framebuffer, poseStack, collector, true, false, tl, bl, br, tr);
 		
 		poseStack.popPose();
 	}

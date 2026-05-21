@@ -22,6 +22,7 @@ import dev.evvie.waylandcraft.WaylandCraft;
 import dev.evvie.waylandcraft.bridge.WLCAbstractWindow.SurfaceGeometry;
 import dev.evvie.waylandcraft.desktop.RawDesktopEntry;
 import dev.evvie.waylandcraft.render.BufferTexture.DmabufTexture;
+import dev.evvie.waylandcraft.render.ShaderWindowPass;
 import dev.evvie.waylandcraft.render.WindowFramebuffer;
 import net.minecraft.util.profiling.Profiler;
 import net.minecraft.util.profiling.ProfilerFiller;
@@ -438,6 +439,7 @@ public class WaylandCraftBridge {
 		framebuffers.retainAll(usedFramebuffers);
 
 		WindowFramebuffer.endFrame();
+		ShaderWindowPass.endFrame();
 	}
 	
 	private void updateGeometry(WLCAbstractWindow window) {
