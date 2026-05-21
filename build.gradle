@@ -25,7 +25,7 @@ dependencies {
 
 	// Fabric API. This is technically optional, but you probably want it anyway.
 	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
-	
+
 }
 
 processResources {
@@ -58,7 +58,9 @@ jar {
 		rename { "${it}_${inputs.properties.archivesName}"}
 	}
 
-	def nativeFile = file("native/target/debug/libwaylandcraft.so")
+	def releaseLib = file("native/target/release/libwaylandcraft.so")
+	def debugLib = file("native/target/debug/libwaylandcraft.so")
+	def nativeFile = releaseLib.exists() ? releaseLib : debugLib
 	if(!nativeFile.exists()) { ant.fail("native library not built!") }
 	from(nativeFile)
 }
