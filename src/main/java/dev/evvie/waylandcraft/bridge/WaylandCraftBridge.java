@@ -575,6 +575,10 @@ public class WaylandCraftBridge {
 	public void resizeToplevelOverride(WLCToplevel toplevel, int width, int height) {
 		toplevelResizeOvr(toplevel.getHandle(), width, height);
 	}
+
+	public void closeToplevel(WLCToplevel toplevel) {
+		toplevelClose(toplevel.getHandle());
+	}
 	
 	public void maximizeToplevel(WLCToplevel toplevel) {
 		toplevelMaximize(instance, toplevel.getHandle());
@@ -693,6 +697,8 @@ public class WaylandCraftBridge {
 	private static native void toplevelResize(long handle, int width, int height, boolean interactive);
 	// Resize toplevel override, keep maximized and fullscreen state, stop interactive resize
 	private static native void toplevelResizeOvr(long handle, int width, int height);
+	// Request a toplevel to close (sends xdg_toplevel.close to the client)
+	private static native void toplevelClose(long handle);
 	
 	// Collect all toplevels that have sent a minimize request and clear the list
 	private static native long[] minimizeReq(long instance);

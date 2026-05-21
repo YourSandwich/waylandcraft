@@ -1774,6 +1774,21 @@ pub extern "system" fn toplevelResizeOvr<'l>(
 }
 
 #[unsafe(export_name = "Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_\
+    toplevelClose")]
+pub extern "system" fn toplevelClose<'l>(
+    _env: JNIEnv<'l>,
+    _class: JClass<'l>,
+    handle: jlong,
+) {
+    match jptr_to_toplevel(handle) {
+        WlcWindow::Xdg(toplevel) => toplevel.send_close(),
+        WlcWindow::X11(window) => {
+            let _ = window.close();
+        }
+    }
+}
+
+#[unsafe(export_name = "Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_\
     toplevelMaximize")]
 pub extern "system" fn toplevelMaximize<'l>(
     _env: JNIEnv<'l>,

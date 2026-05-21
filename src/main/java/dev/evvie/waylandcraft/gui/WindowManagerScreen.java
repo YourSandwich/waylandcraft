@@ -45,6 +45,7 @@ public class WindowManagerScreen extends Screen {
 	private Button hideButton;
 	private Button pinButton;
 	private Button itemButton;
+	private Button closeButton;
 	
 	private boolean resizeMode = false;
 	private WLCToplevel resizeToplevel = null;
@@ -117,6 +118,12 @@ public class WindowManagerScreen extends Screen {
 				.size(buttonWidth, buttonHeight)
 				.build();
 		buttons.add(resizeButton);
+
+		closeButton = Button.builder(Component.literal("Close"), this::onClosePressed)
+				.pos(margin, margin)
+				.size(buttonWidth, buttonHeight)
+				.build();
+		buttons.add(closeButton);
 		
 		hideButton = SpriteIconButton.builder(Component.literal("Hide"), this::onHidePressed, true)
 				.sprite(Identifier.fromNamespaceAndPath("waylandcraft", "hide"), 15, 15)
@@ -150,6 +157,7 @@ public class WindowManagerScreen extends Screen {
 		addRenderableWidget(hideButton);
 		addRenderableWidget(pinButton);
 		addRenderableWidget(itemButton);
+		addRenderableWidget(closeButton);
 		
 		wlc.bridge.activateKeyboard();
 	}
@@ -190,6 +198,11 @@ public class WindowManagerScreen extends Screen {
 	private void onItemPressed(Button button) {
 		if(focused == null) return;
 		wlc.itemManager.giveItem(focused);
+	}
+
+	private void onClosePressed(Button button) {
+		if(focused == null || !focused.isAlive()) return;
+		wlc.bridge.closeToplevel(focused);
 	}
 	
 	private void exitResizeMode() {
@@ -296,6 +309,7 @@ public class WindowManagerScreen extends Screen {
 			hideButton.active = wlc.hasDisplayFor(focused);
 			pinButton.active = true;
 			itemButton.active = true;
+			closeButton.active = true;
 		}
 		else {
 			grabButton.active = false;
@@ -303,6 +317,7 @@ public class WindowManagerScreen extends Screen {
 			hideButton.active = false;
 			pinButton.active = false;
 			itemButton.active = false;
+			closeButton.active = false;
 		}
 		
 		buttons.forEach((b) -> b.visible = true);
