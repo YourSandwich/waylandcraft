@@ -592,8 +592,7 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 			// Start new implicit grab when conditions are met
 			if(!pointerGrabs.isImplicitActive() && hoveredDisplay != null && hoveredDisplay.dist >= 0) {
 				pointerGrabs.startImplicit(hoveredDisplay);
-				WLCAbstractWindow window = hoveredDisplay.target.window;
-				if(window instanceof WLCToplevel) bridge.focusSurface((WLCToplevel) window);
+				focusClickedWindow(hoveredDisplay.target.window);
 			}
 			
 			// If an implicit pointer grab is now active, capture the button press
@@ -668,9 +667,8 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 			bridge.sendScroll(0, -scrollY * 10);
 			bridge.sendScroll(1, -scrollX * 10);
 			
-			WLCAbstractWindow window = hoveredDisplay.target.window;
-			if(window instanceof WLCToplevel) bridge.focusSurface((WLCToplevel) window);
-			
+			focusClickedWindow(hoveredDisplay.target.window);
+
 			return true;
 		}
 		
@@ -720,6 +718,17 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 		return scancode;
 	}
 	
+	// Focus the toplevel a clicked window belongs to. Clicking a popup (menu,
+	// dropdown, tooltip) must focus its owning root toplevel, not the popup -
+	// focusSurface only takes toplevels, so a popup click would otherwise drop
+	// focus silently.
+	private void focusClickedWindow(WLCAbstractWindow window) {
+		while(window instanceof WLCPopup) {
+			window = ((WLCPopup) window).getParent();
+		}
+		if(window instanceof WLCToplevel) bridge.focusSurface((WLCToplevel) window);
+	}
+
 	private void anchorToParent(WLCPopup popup) {
 		WindowDisplay window = displays.stream().filter((w) -> w.window == popup).findAny().orElse(null);
 		WindowDisplay parent = displays.stream().filter((w) -> w.window == popup.getParent()).findAny().orElse(null);
