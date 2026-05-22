@@ -168,7 +168,7 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 		}
 		bridge.update();
 	}
-	
+
 	public void renderWorld(LevelRenderContext ctx) {
 		if(bridge == null) return;
 
@@ -645,10 +645,6 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 			this.cursorShape = bridge.getCursorShape();
 			this.pointerOnSurface = true;
 			bridge.sendMotionRefocus(surface, rel.x, rel.y);
-			
-			if(keyboardCaptureMode != KeyboardCaptureMode.NONE && bridge.maybeLockPointer(surface)) {
-				pointerCapture = new PointerCapture(surface, rel.x, rel.y, false);
-			}
 		}
 		else {
 			bridge.sendMotionOutside();
@@ -807,7 +803,9 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 	 */
 	public boolean onKeyPress(long windowHandle, int key, int scancode, int action, int modifiers) {
 		if(key == GLFW.GLFW_KEY_Q && modifiers == GLFW.GLFW_MOD_ALT) {
-			if(action == 0) return true;
+			// Toggle only on the initial press - a held Alt+Q reports release and
+			// repeat actions too, both of which must not flip capture mode.
+			if(action != GLFW.GLFW_PRESS) return true;
 
 			if(keyboardCaptureMode != KeyboardCaptureMode.HARD_CAPTURE) {
 				enableKeyboardCapture(true);
@@ -838,7 +836,12 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 			return true;
 		}
 		
-		if(action == GLFW.GLFW_PRESS) {
+		// GLFW_REPEAT carries the OS key-repeat for a held key. The compositor
+		// drives repeat itself by re-sending the pressed event (client-side
+		// wl_keyboard repeat is disabled, see seat.rs repeat_info), so a repeat
+		// is forwarded as another press. A repeated press keeps a held key
+		// functionally held for game windows while still feeding text clients.
+		if(action == GLFW.GLFW_PRESS || action == GLFW.GLFW_REPEAT) {
 			bridge.pressKey(scancode);
 		}
 		else if(action == GLFW.GLFW_RELEASE) {
@@ -887,9 +890,10 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 	
 	public static enum KeyboardCaptureMode {
 
-		// CAPTURE: keyboard-only (G). HARD_CAPTURE: relative mouse for 3D games
-		// (Alt+Q). DESKTOP: camera locked, the captured mouse drives an absolute
-		// cursor on the focused window (Alt+G).
+		// CAPTURE (G) and HARD_CAPTURE (Alt+Q): keyboard-only, the mouse keeps
+		// driving the player view; HARD_CAPTURE additionally forwards Escape.
+		// DESKTOP (Alt+G): camera locked, the captured mouse drives an absolute
+		// cursor on the focused window.
 		NONE, CAPTURE, HARD_CAPTURE, DESKTOP;
 
 	}

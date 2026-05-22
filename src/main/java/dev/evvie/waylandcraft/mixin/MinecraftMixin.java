@@ -20,7 +20,7 @@ public class MinecraftMixin {
 	public void runTick(boolean doTick, CallbackInfo info) {
 		WaylandCraft.instance.update();
 	}
-	
+
 	@Inject(method = "pick", at = @At("TAIL"))
 	public void pick(float partialTicks, CallbackInfo info) {
 		HitResult result = Minecraft.getInstance().hitResult;

@@ -96,6 +96,13 @@ pub struct WLCKeyboardData {
     // WlSurface holding keyboard focus
     // This surface has to be of the same client as the WlKeyboard
     focus: Option<WlSurface>,
+    // Last (depressed, latched, locked, group) sent in a wl_keyboard.modifiers
+    // event, or None if none has been sent since the last leave. wl_keyboard
+    // .modifiers must only fire when the modifier state actually changed - a
+    // redundant modifiers event resets a client's key-repeat timer, so spamming
+    // it stops native clients auto-repeating a held key. Reset to None on leave
+    // so the next enter re-sends the baseline state.
+    last_mods: Option<(u32, u32, u32, u32)>,
 }
 
 type WLCKeyboard = Arc<Mutex<WLCKeyboardData>>;
@@ -212,7 +219,11 @@ impl WLCSeatState {
     }
 
     fn pointer_focus(&mut self, surface: Option<&WlSurface>, x: f64, y: f64) {
-        let serial = new_serial();
+        // Allocate the serial lazily: pointer_focus runs every frame, but a
+        // leave/enter only fires when the focus surface actually changes.
+        // Burning a serial per frame is wasteful, and any per-frame wl_pointer
+        // traffic to a native client resets its key-repeat timer.
+        let mut serial: Option<u32> = None;
 
         // Unfocus any pointers currently focused on the wrong surface
         self.for_all_pointers(|pointer, data| {
@@ -225,7 +236,7 @@ impl WLCSeatState {
                 None => true,
             };
             if unfocus {
-                pointer.leave(serial, focus);
+                pointer.leave(*serial.get_or_insert_with(new_serial), focus);
                 self.pointer_frame(pointer);
                 data.focus = None;
                 data.last_enter = None;
@@ -251,6 +262,7 @@ impl WLCSeatState {
                 return;
             }
 
+            let serial = *serial.get_or_insert_with(new_serial);
             pointer.enter(serial, surface, x, y);
             self.pointer_frame(pointer);
             data.focus = Some(surface.clone());
@@ -368,6 +380,7 @@ impl WLCSeatState {
                 if let Some(focus) = &data.focus {
                     keyboard.leave(serial, focus);
                     data.focus = None;
+                    data.last_mods = None;
                 }
                 return;
             }
@@ -382,6 +395,7 @@ impl WLCSeatState {
                 }
                 keyboard.leave(serial, focus);
                 data.focus = None;
+                data.last_mods = None;
             }
 
             // Keyboard should enter surface
@@ -390,7 +404,7 @@ impl WLCSeatState {
             keyboard.enter(serial, &surface, pressed);
             data.focus = Some(surface.clone());
 
-            self.send_modifiers(keyboard, serial);
+            self.send_modifiers(keyboard, data, serial);
         });
     }
 
@@ -416,8 +430,9 @@ impl WLCSeatState {
 
                 let pressed = self.serialize_pressed_keys();
                 keyboard.leave(serial, focus);
+                data.last_mods = None;
                 keyboard.enter(serial, focus, pressed);
-                self.send_modifiers(keyboard, serial);
+                self.send_modifiers(keyboard, data, serial);
             }
         });
     }
@@ -426,6 +441,14 @@ impl WLCSeatState {
         if self.kb_active {
             return;
         }
+
+        // Capture is entered via a key chord (G, Alt+Q, Alt+G), so the chord
+        // keys are physically held right now and their releases are swallowed
+        // by the chord handlers - they never reach the client. Drop the held
+        // keys and reset the xkb modifier state so the wl_keyboard.enter and
+        // .modifiers the focused window gets do not report a stuck Alt/G/Q.
+        self.pressed_keys.clear();
+        self.xkb_state = xkb::State::new(&self.keymap);
 
         self.kb_active = true;
         self.keyboard_refocus();
@@ -436,28 +459,57 @@ impl WLCSeatState {
             return;
         }
 
+        // Capture is left via a key chord too (Alt+Q, Alt+G). The chord's Alt
+        // was forwarded to the focused window as a press while capture was
+        // still on, but its release lands after the mode flips to NONE and is
+        // swallowed - the window would be left with a stuck Alt. wl_keyboard
+        // .leave does not reliably release held keys client-side, so send an
+        // explicit release for every key still held before going inactive.
+        let serial = new_serial();
+        let time = get_time();
+        let keys: Vec<u32> = self.pressed_keys.iter().copied().collect();
+        self.for_all_keyboards(|keyboard, data| {
+            if data.focus.is_some() {
+                for &key in &keys {
+                    keyboard.key(serial, time, key - 8, KeyState::Released);
+                }
+            }
+        });
+
         self.kb_active = false;
         self.keyboard_refocus();
     }
 
-    fn send_modifiers(&self, keyboard: &WlKeyboard, serial: u32) {
-        if !self.kb_active {
-            keyboard.modifiers(
-                serial,
-                0, // MODS_DEPRESSED
-                0, // MODS_LATCHED
-                0, // MODS_LOCKED
-                self.xkb_state.serialize_layout(xkb::STATE_LAYOUT_EFFECTIVE),
-            );
+    // Send wl_keyboard.modifiers to a keyboard, but only when the modifier
+    // state actually changed since the last send to it - a redundant modifiers
+    // event resets a client's key-repeat timer. While keyboard capture is off
+    // the client must see no modifiers held, so all four values are zeroed.
+    fn send_modifiers(
+        &self,
+        keyboard: &WlKeyboard,
+        data: &mut WLCKeyboardData,
+        serial: u32,
+    ) {
+        let group =
+            self.xkb_state.serialize_layout(xkb::STATE_LAYOUT_EFFECTIVE);
+        let mods = if self.kb_active {
+            (
+                self.xkb_state.serialize_mods(xkb::STATE_MODS_DEPRESSED),
+                self.xkb_state.serialize_mods(xkb::STATE_MODS_LATCHED),
+                self.xkb_state.serialize_mods(xkb::STATE_MODS_LOCKED),
+                group,
+            )
+        } else {
+            (0, 0, 0, group)
+        };
+
+        if data.last_mods == Some(mods) {
             return;
         }
-        keyboard.modifiers(
-            serial,
-            self.xkb_state.serialize_mods(xkb::STATE_MODS_DEPRESSED),
-            self.xkb_state.serialize_mods(xkb::STATE_MODS_LATCHED),
-            self.xkb_state.serialize_mods(xkb::STATE_MODS_LOCKED),
-            self.xkb_state.serialize_layout(xkb::STATE_LAYOUT_EFFECTIVE),
-        );
+        data.last_mods = Some(mods);
+
+        let (depressed, latched, locked, group) = mods;
+        keyboard.modifiers(serial, depressed, latched, locked, group);
     }
 
     pub fn keyboard_unfocus(&mut self) {
@@ -466,6 +518,7 @@ impl WLCSeatState {
             if let Some(focus) = &data.focus {
                 keyboard.leave(serial, focus);
                 data.focus = None;
+                data.last_mods = None;
             }
         });
     }
@@ -478,7 +531,7 @@ impl WLCSeatState {
         self.for_all_keyboards(|keyboard, data| {
             if data.focus.is_some() {
                 keyboard.key(serial, get_time(), key - 8, state);
-                self.send_modifiers(keyboard, serial);
+                self.send_modifiers(keyboard, data, serial);
             }
         });
     }
@@ -646,7 +699,10 @@ impl Dispatch<WlSeat, ()> for WLCState {
                 state.seat.pointers.push(pointer);
             }
             wl_seat::Request::GetKeyboard { id } => {
-                let keyboard_data = WLCKeyboardData { focus: None };
+                let keyboard_data = WLCKeyboardData {
+                    focus: None,
+                    last_mods: None,
+                };
                 let keyboard_data = Arc::new(Mutex::new(keyboard_data));
 
                 let keyboard: WlKeyboard =
@@ -661,7 +717,14 @@ impl Dispatch<WlSeat, ()> for WLCState {
                     keymap.size() as u32,
                 );
 
-                keyboard.repeat_info(25, 200);
+                // Rate 0 disables client-side key repeat. The compositor
+                // drives repeat itself by forwarding GLFW_REPEAT as a repeated
+                // wl_keyboard.key press (see WaylandCraft.onKeyPress); a single
+                // repeat source avoids native clients and Xwayland each adding
+                // their own. Xwayland honors rate 0 by not generating X11
+                // auto-repeat, so its X11 windows repeat purely from the
+                // forwarded key events translated into X11 KeyPress.
+                keyboard.repeat_info(0, 200);
             }
             _ => {
                 seat_resource.post_error(
