@@ -6,6 +6,28 @@ Wayland Compositor in Minecraft
 
 Now available on [Modrinth](https://modrinth.com/mod/waylandcraft)!
 
+## LLM-Assisted Soft Fork
+
+This is a soft fork of [WaylandCraft](https://modrinth.com/mod/waylandcraft),
+developed with LLM assistance. It tracks the upstream project and adds the
+following fixes and additions on top of it:
+
+- **Xwayland support** - X11 applications run alongside native Wayland apps,
+  rendered as in-world windows, with input, focus, the clipboard, and
+  drag-and-drop bridged both ways between X11 and Wayland.
+- **Iris shader compatibility** - in-world windows keep their true colors and
+  render correctly while an Iris shaderpack is active.
+- **Window buffer and framebuffer lifecycle fix** - corrects window flicker and
+  resize handling so windows render stably.
+- **Closing in-world windows** - windows can be closed from the window manager
+  screen.
+
+The vendored Iris API jar (`libs/iris.jar`) is Iris `1.10.9+mc26.1.1`.
+
+This fork's code is LLM-assisted, so it is kept as a separate fork and is not
+submitted upstream, in keeping with the original project's contribution policy
+below.
+
 ## System dependencies
 - OS: Linux
 - Minecraft 26.1.2
@@ -21,6 +43,25 @@ Additionally recommended:
 1. Do not use a Minecraft launcher packaged as a flatpak! You won't be able to use your apps.
 2. For nvidia: Set the `__GL_THREADED_OPTIMIZATIONS` environment variable to `0` in your launcher.
 3. If you have weird graphics glitches on nvidia, enable the "Improved Transparency" option in the video settings.
+
+## Keybinds
+
+| Key | Action |
+| --- | --- |
+| `V` | Open the app launcher |
+| `B` | Open the window manager screen |
+| `G` | Capture the keyboard so keystrokes reach the focused window |
+| `Alt + Q` | Toggle hard keyboard capture - also forwards `Esc` and grabs the mouse for 3D apps; press again to release |
+
+`V`, `B`, and `G` are rebindable in Minecraft's Controls settings.
+
+While grabbing a window - press and hold the "Grab" button in the window
+manager screen - these controls move and resize it:
+
+- **scroll** - move toward or away
+- **`Alt` + scroll** - move up and down
+- **`Shift` + scroll** - move left and right
+- **`Ctrl` + drag** - resize the window
 
 ## Frequently Asked Questions
 ### How do I use this thing?
@@ -63,6 +104,7 @@ for a development environment
 
 
 ## Images
+![soft-fork screenshot](/assets/soft-fork.png)
 ![screenshot](/assets/screenshot.png)
 
 ## Disclaimer
