@@ -40,7 +40,7 @@ public class WindowDisplay {
 	}
 	
 	public boolean isValid() {
-		return window.isAlive() && window.framebuffer != null && window.framebuffer.isValid();
+		return window.isAlive() && window.framebuffer != null;
 	}
 	
 	public void rotate(Vec3 normal, Vec3 down) {

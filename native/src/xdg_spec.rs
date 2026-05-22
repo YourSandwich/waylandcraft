@@ -79,6 +79,21 @@ impl XDGSpecHelper {
         self.entries.iter().map(|e| self.to_raw(e)).collect()
     }
 
+    // Resolve an application identifier to a desktop-entry id. The identifier
+    // may be a Wayland app-id or an X11 WM_CLASS like "Ardour-9.2.0", which
+    // never equals the entry file id; find_app_by_id handles StartupWMClass,
+    // file-id and name matching. Returns None when nothing matches.
+    pub fn resolve_app_id(&self, app_id: &str) -> Option<String> {
+        if let Some(entry) = find_app_by_id(&self.entries, Ascii::new(app_id)) {
+            return Some(entry.id().into());
+        }
+        // Some X11 apps embed a version in WM_CLASS ("Ardour-9.2.0"); retry
+        // with the alphabetic prefix so StartupWMClass=Ardour still matches.
+        let base = strip_version_suffix(app_id)?;
+        let entry = find_app_by_id(&self.entries, Ascii::new(base))?;
+        Some(entry.id().into())
+    }
+
     fn resolve_icon_path(&self, entry: &DesktopEntry) -> Option<PathBuf> {
         let icon = entry.icon()?;
 
@@ -130,6 +145,15 @@ impl XDGSpecHelper {
 
         Some(())
     }
+}
+
+// Strip a trailing version-like suffix from an X11 WM_CLASS: the part from the
+// first digit on, plus any separator before it. "Ardour-9.2.0" -> "Ardour".
+// Returns None when there is no digit or nothing precedes it.
+fn strip_version_suffix(s: &str) -> Option<&str> {
+    let cut = s.find(|c: char| c.is_ascii_digit())?;
+    let base = s[..cut].trim_end_matches(['-', '_', ' ', '.']);
+    (!base.is_empty() && base.len() != s.len()).then_some(base)
 }
 
 fn split_exec(exec: &str) -> Result<Vec<String>, ()> {

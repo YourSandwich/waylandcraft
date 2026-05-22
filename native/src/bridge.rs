@@ -15,7 +15,10 @@ use jni::{
     },
 };
 use smithay::{
-    backend::allocator::{Buffer, dmabuf::WeakDmabuf},
+    backend::{
+        allocator::{Buffer, dmabuf::WeakDmabuf},
+        renderer::utils::RendererSurfaceStateUserData,
+    },
     reexports::{
         wayland_protocols::xdg::shell::server::xdg_toplevel,
         wayland_server::{
@@ -31,8 +34,8 @@ use smithay::{
     utils::{Logical, Point, Size},
     wayland::{
         compositor::{
-            BufferAssignment, SubsurfaceCachedState, SurfaceAttributes,
-            SurfaceData, TraversalAction, with_states,
+            SubsurfaceCachedState, SurfaceAttributes, SurfaceData,
+            TraversalAction, with_states,
             with_states as with_surface_data, with_surface_tree_upward,
         },
         dmabuf::get_dmabuf,
@@ -44,15 +47,70 @@ use smithay::{
         single_pixel_buffer::get_single_pixel_buffer,
         viewporter::{ViewportCachedState, ensure_viewport_valid},
     },
+    xwayland::X11Surface,
 };
 use std::ops::DerefMut;
 use std::path::PathBuf;
 
+// A managed window, either an xdg-shell toplevel or an X11 (Xwayland) window.
+// Both variant types are Clone + PartialEq, so the raw-handle machinery
+// (insert_get_handle / get_handle / remove_element) is generic over either.
+// Always stored as Box<WlcWindow> in BridgeState, so the variant size gap
+// never reaches the heap; boxing X11Surface would only add a needless deref.
+#[allow(clippy::large_enum_variant)]
+#[derive(Clone, PartialEq)]
+pub(crate) enum WlcWindow {
+    Xdg(ToplevelSurface),
+    X11(X11Surface),
+}
+
+impl WlcWindow {
+    fn alive(&self) -> bool {
+        match self {
+            WlcWindow::Xdg(t) => t.alive(),
+            WlcWindow::X11(w) => w.alive(),
+        }
+    }
+
+    fn wl_surface(&self) -> Option<WlSurface> {
+        match self {
+            WlcWindow::Xdg(t) => Some(t.wl_surface().clone()),
+            WlcWindow::X11(w) => w.wl_surface(),
+        }
+    }
+}
+
+// A managed popup, either an xdg-shell popup or an X11 override-redirect window
+// (menus, tooltips, dropdowns). Both render anchored to a parent window instead
+// of as a toplevel; the X11 arm mirrors WlcWindow for X11 windows.
+#[allow(clippy::large_enum_variant)]
+#[derive(Clone, PartialEq)]
+pub(crate) enum WlcPopup {
+    Xdg(PopupSurface),
+    X11(X11Surface),
+}
+
+impl WlcPopup {
+    fn alive(&self) -> bool {
+        match self {
+            WlcPopup::Xdg(p) => p.alive(),
+            WlcPopup::X11(w) => w.alive(),
+        }
+    }
+
+    fn wl_surface(&self) -> Option<WlSurface> {
+        match self {
+            WlcPopup::Xdg(p) => Some(p.wl_surface().clone()),
+            WlcPopup::X11(w) => w.wl_surface(),
+        }
+    }
+}
+
 #[allow(clippy::vec_box)]
 pub(crate) struct BridgeState {
     /* Handle collections */
-    toplevels: Vec<Box<ToplevelSurface>>,
-    popups: Vec<Box<PopupSurface>>,
+    toplevels: Vec<Box<WlcWindow>>,
+    popups: Vec<Box<WlcPopup>>,
     surfaces: Vec<Box<WlSurface>>,
     dmabufs: Vec<Box<WeakDmabuf>>,
 }
@@ -129,8 +187,10 @@ pub extern "system" fn sendFrame<'l>(
     _class: JClass<'l>,
     handle: jlong,
 ) {
-    let surface =
-        jptr_to_wlsurface(handle).expect("sendFrame wlsurface exists");
+    let surface = match jptr_to_wlsurface(handle) {
+        Some(s) if s.is_alive() => s,
+        _ => return,
+    };
 
     with_surface_data(&surface, |data| {
         let mut attr_guard = data.cached_state.get::<SurfaceAttributes>();
@@ -176,6 +236,39 @@ where
     }
 }
 
+// Insert each tracked X11 window not already present, deduped on the stable X11
+// window id. X11Surface equality is unusable here - it folds in window
+// liveness, so two clones of the same window can compare unequal and produce a
+// duplicate (the prior rework's bug).
+#[allow(clippy::vec_box)] // Boxed for stable handle addresses, as BridgeState.
+fn insert_x11_toplevels(vec: &mut Vec<Box<WlcWindow>>, windows: &[X11Surface]) {
+    for window in windows {
+        let id = window.window_id();
+        let present = vec.iter().any(|b| match b.as_ref() {
+            WlcWindow::X11(w) => w.window_id() == id,
+            WlcWindow::Xdg(_) => false,
+        });
+        if !present {
+            vec.push(Box::new(WlcWindow::X11(window.clone())));
+        }
+    }
+}
+
+// insert_x11_toplevels for the override/popup list.
+#[allow(clippy::vec_box)] // Boxed for stable handle addresses, as BridgeState.
+fn insert_x11_popups(vec: &mut Vec<Box<WlcPopup>>, windows: &[X11Surface]) {
+    for window in windows {
+        let id = window.window_id();
+        let present = vec.iter().any(|b| match b.as_ref() {
+            WlcPopup::X11(w) => w.window_id() == id,
+            WlcPopup::Xdg(_) => false,
+        });
+        if !present {
+            vec.push(Box::new(WlcPopup::X11(window.clone())));
+        }
+    }
+}
+
 // Get handles of all elements in the list
 fn get_all_handles<T>(vec: &mut [Box<T>]) -> Vec<jlong>
 where
@@ -187,13 +280,12 @@ where
 }
 
 // Remove element from list and free it
-fn remove_element<T>(vec: &mut Vec<Box<T>>, handle: jlong)
-where
-    T: Clone + PartialEq,
-{
-    let ptr: *mut T = (handle as usize) as *mut T;
-    let elem: &mut T = unsafe { &mut *ptr };
-    vec.retain(|e| **e != *elem);
+fn remove_element<T>(vec: &mut Vec<Box<T>>, handle: jlong) {
+    // Match on the boxed element's address - never dereference `handle`. By the
+    // time freeToplevel/freePopup runs, toplevels()/popups()'s retain has
+    // already freed that box, so `handle` is dangling; a stale handle then
+    // simply matches nothing.
+    vec.retain(|e| (&**e as *const T as usize as jlong) != handle);
 }
 
 #[unsafe(export_name = "Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_\
@@ -205,12 +297,36 @@ pub extern "system" fn toplevels<'l>(
 ) -> jarray {
     let instance = jptr_to_instance(ptr);
 
-    insert_all(
+    let xdg_windows: Vec<WlcWindow> = instance
+        .state
+        .xdg_state
+        .toplevel_surfaces()
+        .iter()
+        .map(|t| WlcWindow::Xdg(t.clone()))
+        .collect();
+    insert_all(&mut instance.bridge.toplevels, &xdg_windows);
+
+    // The full tracked X11 set goes in - no surface filter. A window stays in
+    // bridge.toplevels for its whole life, so its handle is stable and the
+    // Java WLCToplevel is created once and never churned.
+    let x11_ids: Vec<u32> = instance
+        .state
+        .x11_windows
+        .iter()
+        .map(|w| w.window_id())
+        .collect();
+    insert_x11_toplevels(
         &mut instance.bridge.toplevels,
-        instance.state.xdg_state.toplevel_surfaces(),
+        &instance.state.x11_windows,
     );
 
-    instance.bridge.toplevels.retain(|t| t.alive());
+    // An unmapped-but-not-destroyed X11Surface stays alive(), so X11 entries
+    // are dropped by X11 window id once destroyed_window removed them from
+    // state.x11_windows - alive() alone is not enough.
+    instance.bridge.toplevels.retain(|t| match t.as_ref() {
+        WlcWindow::Xdg(_) => t.alive(),
+        WlcWindow::X11(w) => x11_ids.contains(&w.window_id()),
+    });
 
     let toplevels = get_all_handles(&mut instance.bridge.toplevels);
     let array = env.new_long_array(toplevels.len() as jsize).unwrap();
@@ -227,12 +343,35 @@ pub extern "system" fn popups<'l>(
 ) -> jarray {
     let instance = jptr_to_instance(ptr);
 
-    insert_all(
+    let xdg_popups: Vec<WlcPopup> = instance
+        .state
+        .xdg_state
+        .popup_surfaces()
+        .iter()
+        .map(|p| WlcPopup::Xdg(p.clone()))
+        .collect();
+    insert_all(&mut instance.bridge.popups, &xdg_popups);
+
+    // The full tracked X11 override/popup set goes in - no surface filter,
+    // the same as toplevels().
+    let x11_ids: Vec<u32> = instance
+        .state
+        .x11_override_windows
+        .iter()
+        .map(|w| w.window_id())
+        .collect();
+    insert_x11_popups(
         &mut instance.bridge.popups,
-        instance.state.xdg_state.popup_surfaces(),
+        &instance.state.x11_override_windows,
     );
 
-    instance.bridge.popups.retain(|t| t.alive());
+    // As with toplevels(), an unmapped-but-not-destroyed X11Surface stays
+    // alive(), so X11 entries are dropped by X11 window id once
+    // destroyed_window removed them from state.x11_override_windows.
+    instance.bridge.popups.retain(|p| match p.as_ref() {
+        WlcPopup::Xdg(_) => p.alive(),
+        WlcPopup::X11(w) => x11_ids.contains(&w.window_id()),
+    });
 
     let popups = get_all_handles(&mut instance.bridge.popups);
     let array = env.new_long_array(popups.len() as jsize).unwrap();
@@ -255,7 +394,12 @@ pub extern "system" fn minimizeReq<'l>(
         .minimize
         .iter()
         .filter(|t| t.alive())
-        .map(|t| insert_get_handle(&mut instance.bridge.toplevels, t))
+        .map(|t| {
+            insert_get_handle(
+                &mut instance.bridge.toplevels,
+                &WlcWindow::Xdg(t.clone()),
+            )
+        })
         .collect();
 
     instance.state.requests.minimize.clear();
@@ -280,7 +424,12 @@ pub extern "system" fn maximizeReq<'l>(
         .maximize
         .iter()
         .filter(|t| t.alive())
-        .map(|t| insert_get_handle(&mut instance.bridge.toplevels, t))
+        .map(|t| {
+            insert_get_handle(
+                &mut instance.bridge.toplevels,
+                &WlcWindow::Xdg(t.clone()),
+            )
+        })
         .collect();
 
     instance.state.requests.maximize.clear();
@@ -305,7 +454,12 @@ pub extern "system" fn unmaximizeReq<'l>(
         .unmaximize
         .iter()
         .filter(|t| t.alive())
-        .map(|t| insert_get_handle(&mut instance.bridge.toplevels, t))
+        .map(|t| {
+            insert_get_handle(
+                &mut instance.bridge.toplevels,
+                &WlcWindow::Xdg(t.clone()),
+            )
+        })
         .collect();
 
     instance.state.requests.unmaximize.clear();
@@ -330,7 +484,12 @@ pub extern "system" fn fullscreenReq<'l>(
         .fullscreen
         .iter()
         .filter(|t| t.alive())
-        .map(|t| insert_get_handle(&mut instance.bridge.toplevels, t))
+        .map(|t| {
+            insert_get_handle(
+                &mut instance.bridge.toplevels,
+                &WlcWindow::Xdg(t.clone()),
+            )
+        })
         .collect();
 
     instance.state.requests.fullscreen.clear();
@@ -355,7 +514,12 @@ pub extern "system" fn unfullscreenReq<'l>(
         .unfullscreen
         .iter()
         .filter(|t| t.alive())
-        .map(|t| insert_get_handle(&mut instance.bridge.toplevels, t))
+        .map(|t| {
+            insert_get_handle(
+                &mut instance.bridge.toplevels,
+                &WlcWindow::Xdg(t.clone()),
+            )
+        })
         .collect();
 
     instance.state.requests.unfullscreen.clear();
@@ -611,41 +775,42 @@ pub extern "system" fn updateSurfaceData<'l>(
     };
 
     with_states(&surface, |data| {
-        let mut attr_guard = data.cached_state.get::<SurfaceAttributes>();
-        let attr = attr_guard.deref_mut().current();
+        // Read smithay's RendererSurfaceState, built by on_commit_buffer_handler
+        // in CompositorHandler::commit. It owns the wl_buffer in a refcounted
+        // Buffer; the buffer is never touched here, so wl_buffer.release stays
+        // smithay's job (fired only when a newer buffer supersedes this one).
+        // None means the surface has never had a commit processed.
+        let renderer_state =
+            data.data_map.get::<RendererSurfaceStateUserData>();
 
-        let (maybe_buf, remove_buf) = if let Some(assign) = &attr.buffer {
-            match assign {
-                BufferAssignment::NewBuffer(b) => (Some(b), false),
-                BufferAssignment::Removed => (None, true),
+        // Clone the Buffer (cheap Arc) out of the locked state so the attach
+        // calls below do not hold the RendererSurfaceState mutex across JNI.
+        let buffer = renderer_state
+            .map(|s| s.lock().unwrap().buffer().cloned());
+
+        match buffer {
+            // Has a renderer state with a current buffer: import it.
+            Some(Some(buf)) => {
+                // First try shm
+                let mut r = try_attach_shm(&mut env, &obj, &buf, data);
+
+                // If not managed by shm, try single pixel
+                if r.not_managed() {
+                    r = try_attach_single_pixel(&mut env, &obj, &buf, data);
+                }
+
+                // If not managed by single pixel, try dmabuf
+                if r.not_managed() {
+                    r = try_attach_dmabuf(
+                        instance, &mut env, &obj, &buf, data,
+                    );
+                }
+
+                let _ = r;
             }
-        } else {
-            (None, false)
-        };
-
-        if let Some(buf) = maybe_buf {
-            // First try shm
-            let mut r = try_attach_shm(&mut env, &obj, buf, data);
-
-            // If not managed by shm, try single pixel
-            if r.not_managed() {
-                r = try_attach_single_pixel(&mut env, &obj, buf, data);
-            }
-
-            // If not managed by single pixel, try dmabuf
-            if r.not_managed() {
-                r = try_attach_dmabuf(instance, &mut env, &obj, buf, data);
-            }
-
-            let _ = r;
-
-            // Done with buffer attachment
-            buf.release();
-            attr.buffer = None;
-        }
-
-        if remove_buf {
-            unsafe {
+            // Has a renderer state but no buffer: the surface was unmapped
+            // (a null buffer was committed). Drop the Java-side texture.
+            Some(None) => unsafe {
                 env.call_method_unchecked(
                     &obj,
                     (WLCSurface_class, "removeBuffer", "()V"),
@@ -653,7 +818,9 @@ pub extern "system" fn updateSurfaceData<'l>(
                     &[],
                 )
                 .unwrap();
-            }
+            },
+            // No renderer state yet: nothing committed, nothing to do.
+            None => {}
         }
 
         let mut vp_data_guard = data.cached_state.get::<ViewportCachedState>();
@@ -690,13 +857,13 @@ pub extern "system" fn updateSurfaceData<'l>(
     });
 }
 
-fn jptr_to_toplevel(ptr: jlong) -> &'static mut ToplevelSurface {
-    let ptr: *mut ToplevelSurface = (ptr as usize) as *mut ToplevelSurface;
+fn jptr_to_toplevel(ptr: jlong) -> &'static mut WlcWindow {
+    let ptr: *mut WlcWindow = (ptr as usize) as *mut WlcWindow;
     unsafe { &mut *ptr }
 }
 
-fn jptr_to_popup(ptr: jlong) -> &'static mut PopupSurface {
-    let ptr: *mut PopupSurface = (ptr as usize) as *mut PopupSurface;
+fn jptr_to_popup(ptr: jlong) -> &'static mut WlcPopup {
+    let ptr: *mut WlcPopup = (ptr as usize) as *mut WlcPopup;
     unsafe { &mut *ptr }
 }
 
@@ -709,10 +876,19 @@ pub extern "system" fn toplevelSurface<'l>(
     handle: jlong,
 ) -> jlong {
     let instance = jptr_to_instance(ptr);
-    let toplevel: &mut ToplevelSurface = jptr_to_toplevel(handle);
-    let surface: &WlSurface = toplevel.wl_surface();
 
-    insert_get_handle(&mut instance.bridge.surfaces, surface)
+    match jptr_to_toplevel(handle) {
+        WlcWindow::Xdg(toplevel) => {
+            let surface: &WlSurface = toplevel.wl_surface();
+            insert_get_handle(&mut instance.bridge.surfaces, surface)
+        }
+        WlcWindow::X11(window) => match window.wl_surface() {
+            Some(surface) => {
+                insert_get_handle(&mut instance.bridge.surfaces, &surface)
+            }
+            None => 0,
+        },
+    }
 }
 
 #[unsafe(export_name = "Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_\
@@ -724,10 +900,19 @@ pub extern "system" fn popupSurface<'l>(
     handle: jlong,
 ) -> jlong {
     let instance = jptr_to_instance(ptr);
-    let popup: &mut PopupSurface = jptr_to_popup(handle);
-    let surface: &WlSurface = popup.wl_surface();
 
-    insert_get_handle(&mut instance.bridge.surfaces, surface)
+    match jptr_to_popup(handle) {
+        WlcPopup::Xdg(popup) => {
+            let surface: &WlSurface = popup.wl_surface();
+            insert_get_handle(&mut instance.bridge.surfaces, surface)
+        }
+        WlcPopup::X11(window) => match window.wl_surface() {
+            Some(surface) => {
+                insert_get_handle(&mut instance.bridge.surfaces, &surface)
+            }
+            None => 0,
+        },
+    }
 }
 
 #[unsafe(export_name = "Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_\
@@ -739,21 +924,29 @@ pub extern "system" fn popupParent<'l>(
     handle: jlong,
 ) -> jlong {
     let instance = jptr_to_instance(ptr);
-    let popup: &mut PopupSurface = jptr_to_popup(handle);
-    let parent_surface: Option<WlSurface> = popup.get_parent_surface();
-    if parent_surface.is_none() {
-        return 0;
-    }
-    let parent_surface: WlSurface = parent_surface.unwrap();
+
+    let parent_surface: WlSurface = match jptr_to_popup(handle) {
+        WlcPopup::Xdg(popup) => match popup.get_parent_surface() {
+            Some(s) => s,
+            None => return 0,
+        },
+        // An X11 override-redirect window carries no parent reference. Its
+        // parent is the X11 toplevel of the same Xwayland whose geometry
+        // contains (or is nearest to) the OR window's position - both
+        // geometries share the X11 coordinate space.
+        WlcPopup::X11(window) => {
+            return x11_override_parent(&instance.bridge.toplevels, window);
+        }
+    };
 
     for toplevel in &instance.bridge.toplevels {
-        if *toplevel.wl_surface() == parent_surface {
+        if toplevel.wl_surface().as_ref() == Some(&parent_surface) {
             return get_handle(&instance.bridge.toplevels, toplevel);
         }
     }
 
     for popup in &instance.bridge.popups {
-        if *popup.wl_surface() == parent_surface {
+        if popup.wl_surface().as_ref() == Some(&parent_surface) {
             return get_handle(&instance.bridge.popups, popup);
         }
     }
@@ -761,24 +954,74 @@ pub extern "system" fn popupParent<'l>(
     0
 }
 
+// Pick the X11 toplevel that owns an override-redirect window: the one whose
+// geometry contains the OR window's origin, else the one nearest to it.
+fn x11_override_parent(
+    toplevels: &[Box<WlcWindow>],
+    window: &X11Surface,
+) -> jlong {
+    let loc = window.geometry().loc;
+
+    let mut best: Option<(&Box<WlcWindow>, i64)> = None;
+    for toplevel in toplevels {
+        let x11 = match toplevel.as_ref() {
+            WlcWindow::X11(w) => w,
+            WlcWindow::Xdg(_) => continue,
+        };
+        let geo = x11.geometry();
+        if geo.contains(loc) {
+            return get_handle(toplevels, toplevel);
+        }
+        let center = geo.loc + geo.size.downscale(2).to_point();
+        let dx = (center.x - loc.x) as i64;
+        let dy = (center.y - loc.y) as i64;
+        let dist = dx * dx + dy * dy;
+        if best.is_none_or(|(_, d)| dist < d) {
+            best = Some((toplevel, dist));
+        }
+    }
+
+    match best {
+        Some((toplevel, _)) => get_handle(toplevels, toplevel),
+        None => 0,
+    }
+}
+
 #[unsafe(export_name = "Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_\
     popupOffset")]
 pub extern "system" fn popupOffset<'l>(
     env: JNIEnv<'l>,
     _class: JClass<'l>,
+    ptr: jlong,
     handle: jlong,
 ) -> jarray {
-    let popup: &mut PopupSurface = jptr_to_popup(handle);
+    let instance = jptr_to_instance(ptr);
     let mut offset: [jint; 2] = [0, 0];
 
-    popup.with_cached_state(|state| {
-        let position = state.last_acked.map(|c| c.state.geometry.loc);
-
-        if let Some(pos) = position {
-            offset[0] = pos.x;
-            offset[1] = pos.y;
+    match jptr_to_popup(handle) {
+        WlcPopup::Xdg(popup) => {
+            popup.with_cached_state(|state| {
+                if let Some(pos) =
+                    state.last_acked.map(|c| c.state.geometry.loc)
+                {
+                    offset = [pos.x, pos.y];
+                }
+            });
         }
-    });
+        // An X11 override-redirect window has only an absolute X11 geometry;
+        // the parent-relative offset is its origin minus the parent's origin,
+        // both in the same X11 coordinate space.
+        WlcPopup::X11(window) => {
+            let parent =
+                x11_override_parent(&instance.bridge.toplevels, window);
+            if parent != 0
+                && let WlcWindow::X11(p) = jptr_to_toplevel(parent)
+            {
+                let off = window.geometry().loc - p.geometry().loc;
+                offset = [off.x, off.y];
+            }
+        }
+    }
 
     let array = env.new_int_array(2).unwrap();
     env.set_int_array_region(&array, 0, &offset).unwrap();
@@ -835,8 +1078,10 @@ pub extern "system" fn updateSurfaceTree<'l>(
         .j()
         .unwrap();
 
-    let surface =
-        jptr_to_wlsurface(handle).expect("updateSurfaceTree surface alive");
+    let surface = match jptr_to_wlsurface(handle) {
+        Some(s) if s.is_alive() => s,
+        _ => return JObject::null().into_raw(),
+    };
 
     let mut last_child: JObject = JObject::null();
 
@@ -1094,13 +1339,20 @@ pub extern "system" fn keyboardFocus<'l>(
     handle: jlong,
 ) {
     let instance = jptr_to_instance(ptr);
-    let toplevel: Option<ToplevelSurface> = if handle != 0 {
+    let window: Option<WlcWindow> = if handle != 0 {
         Some(jptr_to_toplevel(handle).clone())
     } else {
         None
     };
 
-    let surface = toplevel.as_ref().map(|t| t.wl_surface().clone());
+    let surface = window.as_ref().and_then(|w| w.wl_surface());
+
+    // Only xdg toplevels carry the xdg Activated state; an X11 window is
+    // activated and raised separately, below, via sync_x11_focus.
+    let toplevel: Option<ToplevelSurface> = match &window {
+        Some(WlcWindow::Xdg(t)) => Some(t.clone()),
+        _ => None,
+    };
 
     // Update the client gaining keyboard focus with the clipboard contents
     let client = surface.as_ref().and_then(|s| s.client());
@@ -1136,6 +1388,11 @@ pub extern "system" fn keyboardFocus<'l>(
         .for_each(|t| {
             t.send_pending_configure();
         });
+
+    // X11 equivalent of the xdg Activated handling above: activate and raise
+    // the focused X11 window, deactivate the previously focused one. No-op when
+    // focus stays put or never involves an X11 window.
+    crate::xwayland::sync_x11_focus(&mut instance.state, window.as_ref());
 }
 
 #[unsafe(export_name = "Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_\
@@ -1219,8 +1476,10 @@ pub extern "system" fn fullscreened<'l>(
             continue;
         }
 
-        let handle =
-            insert_get_handle(&mut instance.bridge.toplevels, toplevel);
+        let handle = insert_get_handle(
+            &mut instance.bridge.toplevels,
+            &WlcWindow::Xdg(toplevel.clone()),
+        );
         handles.push(handle);
     }
 
@@ -1398,18 +1657,24 @@ pub extern "system" fn toplevelTitle<'l>(
     _class: JClass<'l>,
     handle: jlong,
 ) -> jstring {
-    let toplevel = jptr_to_toplevel(handle);
-    let surface = toplevel.wl_surface();
-
-    let title = with_states(surface, |states| {
-        let attr_guard = states
-            .data_map
-            .get::<XdgToplevelSurfaceData>()
-            .unwrap()
-            .lock()
-            .unwrap();
-        attr_guard.title.clone()
-    });
+    let title = match jptr_to_toplevel(handle) {
+        WlcWindow::Xdg(toplevel) => {
+            let surface = toplevel.wl_surface();
+            with_states(surface, |states| {
+                let attr_guard = states
+                    .data_map
+                    .get::<XdgToplevelSurfaceData>()
+                    .unwrap()
+                    .lock()
+                    .unwrap();
+                attr_guard.title.clone()
+            })
+        }
+        WlcWindow::X11(window) => {
+            let title = window.title();
+            (!title.is_empty()).then_some(title)
+        }
+    };
 
     if let Some(title) = title {
         env.new_string(&title).unwrap().into_raw()
@@ -1425,18 +1690,24 @@ pub extern "system" fn toplevelAppID<'l>(
     _class: JClass<'l>,
     handle: jlong,
 ) -> jstring {
-    let toplevel = jptr_to_toplevel(handle);
-    let surface = toplevel.wl_surface();
-
-    let app_id = with_states(surface, |states| {
-        let attr_guard = states
-            .data_map
-            .get::<XdgToplevelSurfaceData>()
-            .unwrap()
-            .lock()
-            .unwrap();
-        attr_guard.app_id.clone()
-    });
+    let app_id = match jptr_to_toplevel(handle) {
+        WlcWindow::Xdg(toplevel) => {
+            let surface = toplevel.wl_surface();
+            with_states(surface, |states| {
+                let attr_guard = states
+                    .data_map
+                    .get::<XdgToplevelSurfaceData>()
+                    .unwrap()
+                    .lock()
+                    .unwrap();
+                attr_guard.app_id.clone()
+            })
+        }
+        WlcWindow::X11(window) => {
+            let class = window.class();
+            (!class.is_empty()).then_some(class)
+        }
+    };
 
     if let Some(app_id) = app_id {
         env.new_string(&app_id).unwrap().into_raw()
@@ -1455,19 +1726,26 @@ pub extern "system" fn toplevelResize<'l>(
     height: jint,
     interactive: jboolean,
 ) {
-    let toplevel = jptr_to_toplevel(handle);
-
-    toplevel.with_pending_state(|state| {
-        state.size = Some(Size::new(width, height));
-        state.states.unset(xdg_toplevel::State::Maximized);
-        state.states.unset(xdg_toplevel::State::Fullscreen);
-        if interactive == JNI_TRUE {
-            state.states.set(xdg_toplevel::State::Resizing);
-        } else {
-            state.states.unset(xdg_toplevel::State::Resizing);
+    match jptr_to_toplevel(handle) {
+        WlcWindow::Xdg(toplevel) => {
+            toplevel.with_pending_state(|state| {
+                state.size = Some(Size::new(width, height));
+                state.states.unset(xdg_toplevel::State::Maximized);
+                state.states.unset(xdg_toplevel::State::Fullscreen);
+                if interactive == JNI_TRUE {
+                    state.states.set(xdg_toplevel::State::Resizing);
+                } else {
+                    state.states.unset(xdg_toplevel::State::Resizing);
+                }
+            });
+            toplevel.send_pending_configure();
         }
-    });
-    toplevel.send_pending_configure();
+        WlcWindow::X11(window) => {
+            let mut rect = window.geometry();
+            rect.size = Size::new(width, height);
+            let _ = window.configure(Some(rect));
+        }
+    }
 }
 
 #[unsafe(export_name = "Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_\
@@ -1479,13 +1757,20 @@ pub extern "system" fn toplevelResizeOvr<'l>(
     width: jint,
     height: jint,
 ) {
-    let toplevel = jptr_to_toplevel(handle);
-
-    toplevel.with_pending_state(|state| {
-        state.size = Some(Size::new(width, height));
-        state.states.unset(xdg_toplevel::State::Resizing);
-    });
-    toplevel.send_pending_configure();
+    match jptr_to_toplevel(handle) {
+        WlcWindow::Xdg(toplevel) => {
+            toplevel.with_pending_state(|state| {
+                state.size = Some(Size::new(width, height));
+                state.states.unset(xdg_toplevel::State::Resizing);
+            });
+            toplevel.send_pending_configure();
+        }
+        WlcWindow::X11(window) => {
+            let mut rect = window.geometry();
+            rect.size = Size::new(width, height);
+            let _ = window.configure(Some(rect));
+        }
+    }
 }
 
 #[unsafe(export_name = "Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_\
@@ -1497,17 +1782,26 @@ pub extern "system" fn toplevelMaximize<'l>(
     handle: jlong,
 ) {
     let instance = jptr_to_instance(ptr);
-    let toplevel = jptr_to_toplevel(handle);
 
-    toplevel.with_pending_state(|state| {
-        if state.states.contains(xdg_toplevel::State::Fullscreen) {
-            return;
+    match jptr_to_toplevel(handle) {
+        WlcWindow::Xdg(toplevel) => {
+            toplevel.with_pending_state(|state| {
+                if state.states.contains(xdg_toplevel::State::Fullscreen) {
+                    return;
+                }
+                let output = &instance.state.output;
+                state.size = Some(output.bounds());
+                state.states.set(xdg_toplevel::State::Maximized);
+            });
+            toplevel.send_configure();
         }
-        let output = &instance.state.output;
-        state.size = Some(output.bounds());
-        state.states.set(xdg_toplevel::State::Maximized);
-    });
-    toplevel.send_configure();
+        WlcWindow::X11(window) => {
+            if window.is_fullscreen() {
+                return;
+            }
+            let _ = window.set_maximized(true);
+        }
+    }
 }
 
 #[unsafe(export_name = "Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_\
@@ -1515,18 +1809,31 @@ pub extern "system" fn toplevelMaximize<'l>(
 pub extern "system" fn toplevelFullscreen<'l>(
     _env: JNIEnv<'l>,
     _class: JClass<'l>,
-    ptr: jlong,
+    _ptr: jlong,
     handle: jlong,
+    width: jint,
+    height: jint,
 ) {
-    let instance = jptr_to_instance(ptr);
-    let toplevel = jptr_to_toplevel(handle);
-
-    toplevel.with_pending_state(|state| {
-        let output = &instance.state.output;
-        state.size = Some(output.size());
-        state.states.set(xdg_toplevel::State::Fullscreen);
-    });
-    toplevel.send_configure();
+    match jptr_to_toplevel(handle) {
+        WlcWindow::Xdg(toplevel) => {
+            // Fullscreen state, but keep the window at its current size instead
+            // of expanding to the output - so it stays normal-sized and
+            // resizable.
+            toplevel.with_pending_state(|state| {
+                state.size = Some(Size::new(width, height));
+                state.states.set(xdg_toplevel::State::Fullscreen);
+            });
+            toplevel.send_configure();
+        }
+        WlcWindow::X11(window) => {
+            // Match the Xdg arm: set the fullscreen state but keep the window
+            // at its current size instead of expanding to the output.
+            let _ = window.set_fullscreen(true);
+            let mut rect = window.geometry();
+            rect.size = Size::new(width, height);
+            let _ = window.configure(Some(rect));
+        }
+    }
 }
 
 #[unsafe(export_name = "Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_\
@@ -1683,6 +1990,24 @@ pub extern "system" fn loadDesktopEntry<'l>(
 }
 
 #[unsafe(export_name = "Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_\
+    resolveAppID")]
+pub extern "system" fn resolveAppID<'l>(
+    env: JNIEnv<'l>,
+    _class: JClass<'l>,
+    ptr: jlong,
+    app_id: JString<'l>,
+) -> jstring {
+    let instance = jptr_to_instance(ptr);
+    let app_id: String =
+        unsafe { env.get_string_unchecked(&app_id).unwrap() }.into();
+
+    match instance.xdg.resolve_app_id(&app_id) {
+        Some(id) => env.new_string(&id).unwrap().into_raw(),
+        None => std::ptr::null_mut(),
+    }
+}
+
+#[unsafe(export_name = "Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_\
     loadDesktopEntries")]
 pub extern "system" fn loadDesktopEntries<'l>(
     mut env: JNIEnv<'l>,
@@ -1744,12 +2069,19 @@ pub extern "system" fn execApp<'l>(
     let app_id: String =
         unsafe { env.get_string_unchecked(&app_id).unwrap() }.into();
 
-    let env_vars = vec![
+    let mut env_vars = vec![
         ("WAYLAND_DISPLAY".into(), instance.state.socket.clone()),
         ("QT_QPA_PLATFORM".into(), "wayland".into()),
         ("ELECTRON_OZONE_PLATFORM_HINT".into(), "auto".into()),
-        ("GDK_BACKEND".into(), "wayland".into())
+        ("GDK_BACKEND".into(), "wayland".into()),
     ];
+
+    // process::spawn strips DISPLAY then applies the caller's env, so X11 apps
+    // only reach Xwayland if DISPLAY is in this vec.
+    if let Some(display) = instance.state.xdisplay {
+        env_vars.push(("DISPLAY".into(), format!(":{display}").into()));
+    }
+
     instance.xdg.exec_app(app_id, env_vars) as jboolean
 }
 
@@ -1829,7 +2161,7 @@ pub extern "system" fn dndCancel<'l>(
     ptr: jlong,
 ) {
     let instance = jptr_to_instance(ptr);
-    instance.state.data.dnd_cancel();
+    instance.state.dnd_cancel();
 }
 
 #[unsafe(export_name = "Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_\
@@ -1840,7 +2172,7 @@ pub extern "system" fn dndDrop<'l>(
     ptr: jlong,
 ) {
     let instance = jptr_to_instance(ptr);
-    instance.state.data.dnd_drop();
+    instance.state.dnd_drop();
 }
 
 #[unsafe(export_name = "Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_\
@@ -1855,7 +2187,7 @@ pub extern "system" fn dndMotion<'l>(
 ) {
     let instance = jptr_to_instance(ptr);
     let surface = jptr_to_wlsurface(handle);
-    instance.state.data.dnd_motion(surface, x, y);
+    instance.state.dnd_motion(surface, x, y);
 }
 
 #[unsafe(export_name = "Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_\
@@ -1874,4 +2206,19 @@ pub extern "system" fn dndIcon<'l>(
         Some(icon) => insert_get_handle(&mut instance.bridge.surfaces, icon),
         None => 0,
     }
+}
+
+// True while an X11 app's XDND drag is in flight onto WaylandCraft (Stage C).
+// Polled each tick by WaylandCraft.java: a rising edge starts an in-world
+// X11DNDGrab that ray-casts the cursor and drives the Wayland target; a falling
+// edge ends it. The X11 source, not the in-world mouse, owns drop/cancel.
+#[unsafe(export_name = "Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_\
+    checkX11Dnd")]
+pub extern "system" fn checkX11Dnd<'l>(
+    _env: JNIEnv<'l>,
+    _class: JClass<'l>,
+    ptr: jlong,
+) -> jboolean {
+    let instance = jptr_to_instance(ptr);
+    instance.state.xdnd_target_active() as jboolean
 }

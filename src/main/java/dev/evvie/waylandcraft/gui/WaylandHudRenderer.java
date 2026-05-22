@@ -60,12 +60,10 @@ public class WaylandHudRenderer {
 		}
 		
 		for(WLCToplevel toplevel : WaylandCraft.instance.bridge.getMappedToplevels()) {
-			String appID = toplevel.appID;
-			DesktopEntry entry = wlc.xdgManager.forAppId(appID);
-			
-			String name = "<unknown app>";
-			if(appID != null) name = appID;
-			if(entry != null && entry.name != null) name = entry.name;
+			DesktopEntry entry = wlc.xdgManager.forAppId(toplevel.appID);
+
+			String name = toplevel.displayName();
+			if(name == null) name = "<unknown app>";
 			
 			Style style = Style.EMPTY;
 			Color color = Color.white;

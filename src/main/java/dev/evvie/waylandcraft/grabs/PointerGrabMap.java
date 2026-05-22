@@ -28,6 +28,12 @@ public class PointerGrabMap {
 	public boolean isExclusiveGrabActive() {
 		return exclusiveGrab != null;
 	}
+
+	// The currently active exclusive grab, or null. Used by the X11 DnD poll to
+	// tell whether its X11DNDGrab is still installed or was force-released.
+	public PointerGrab getExclusiveGrab() {
+		return exclusiveGrab;
+	}
 	
 	public boolean isGrabActive(int button) {
 		return (exclusiveGrab != null && exclusiveGrab.button == button) || (implicitGrabs != null && implicitGrabs.contains(button));
@@ -160,6 +166,16 @@ public class PointerGrabMap {
 			// No handling necessary, grab always removed
 		}
 		exclusiveGrab = null;
+	}
+
+	/* Discard any active implicit pointer grabs without forwarding button
+	 * releases to the client. Used to clear the implicit grab left by the
+	 * button press that started an X11-initiated drag: that button is still
+	 * physically held and its release belongs to the X11 source, so it must
+	 * not be synthesized here. Unlike releaseImplicit, sends no button-up.
+	 */
+	public void discardImplicit() {
+		implicitGrabs = null;
 	}
 
 	/* Drop an active implicit pointer grab that matches the given serial.

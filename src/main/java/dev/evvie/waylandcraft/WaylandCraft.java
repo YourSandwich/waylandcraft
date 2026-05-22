@@ -26,6 +26,7 @@ import dev.evvie.waylandcraft.grabs.MoveGrab;
 import dev.evvie.waylandcraft.grabs.PointerGrabMap;
 import dev.evvie.waylandcraft.grabs.PointerGrabMap.ImplicitGrab;
 import dev.evvie.waylandcraft.grabs.ResizeGrab;
+import dev.evvie.waylandcraft.grabs.X11DNDGrab;
 import dev.evvie.waylandcraft.gui.AppLauncherScreen;
 import dev.evvie.waylandcraft.gui.WaylandHudRenderer;
 import dev.evvie.waylandcraft.gui.WindowManagerScreen;
@@ -86,6 +87,11 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 	public WaylandHudRenderer hudRenderer = new WaylandHudRenderer(this);
 	
 	public PointerGrabMap pointerGrabs = new PointerGrabMap(this);
+
+	// The in-world grab driving an X11-initiated drag (Stage C), or null when no
+	// X11 drag is in flight. Re-armed by the poll if something else (a Minecraft
+	// screen opening) force-released it while the X11 drag is still going.
+	private X11DNDGrab x11DndGrab = null;
 	
 	// HitResult of currently hovered WindowDisplay
 	// Only non-null, when no exclusive pointer grabs are currently active
@@ -291,8 +297,7 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 				toplevel.restoreGeometry = null;
 			}
 			else if(toplevel.requests.fullscreen) {
-				// Fullscreen toplevel and store its old geometry
-				toplevel.restoreGeometry = toplevel.geometry;
+				// Fullscreen at the window's current size, not the whole output.
 				bridge.fullscreenToplevel(toplevel);
 			}
 			else if(toplevel.requests.unfullscreen) {
@@ -339,6 +344,46 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 				LOGGER.info("drag and drop did not match implicit grab");
 				bridge.dndCancel();
 			}
+		}
+
+		updateX11Dnd();
+	}
+
+	/* Poll the X11-initiated drag (Stage C). An X11 app's XDND drag is not
+	 * triggered by a Wayland start_drag, so no implicit grab matches it -
+	 * instead the native side reports the drag and an X11DNDGrab is started so
+	 * the in-world cursor ray-cast drives the Wayland target. The grab ends
+	 * when the X11 source finishes or cancels the drag, observed here as the
+	 * native poll going false.
+	 */
+	private void updateX11Dnd() {
+		boolean active = bridge.isX11DndActive();
+
+		if(!active) {
+			// The X11 drag ended. Drop the (now defunct) grab if it is still
+			// installed; the X11DNDGrab carries no real button, so only
+			// releaseAll can end it.
+			if(x11DndGrab != null) {
+				if(pointerGrabs.getExclusiveGrab() == x11DndGrab) pointerGrabs.releaseAll();
+				x11DndGrab = null;
+			}
+			return;
+		}
+
+		// An X11 drag is in flight. Arm the motion-driving grab if it is not
+		// installed - either it was never started, or a Minecraft screen
+		// opening force-released it and the screen has since closed. While a
+		// non-WM screen is open processPointerMotion force-releases every
+		// frame, so do not re-arm then - it would just churn.
+		boolean screenBlocks = Minecraft.getInstance().screen != null
+				&& !(Minecraft.getInstance().screen instanceof WindowManagerScreen);
+		if(!screenBlocks && pointerGrabs.getExclusiveGrab() != x11DndGrab) {
+			// The button press that started the X11 drag left an implicit
+			// grab. Discard it WITHOUT a synthesized button-up - that button
+			// is physically held and its release belongs to the X11 source.
+			pointerGrabs.discardImplicit();
+			x11DndGrab = new X11DNDGrab();
+			pointerGrabs.startExclusive(x11DndGrab);
 		}
 	}
 	
@@ -500,7 +545,15 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 			pointerGrabs.release(button);
 			return true;
 		}
-		
+
+		// During an X11-initiated drag the X11 source has grabbed the X
+		// pointer, so all mouse buttons belong to it - forward them to
+		// Xwayland. The release that ends the drag must reach the X11 source.
+		if(x11DndGrab != null) {
+			bridge.sendButton(0x110 + button, action);
+			return true;
+		}
+
 		if(pointerGrabs.isExclusiveGrabActive()) return true;
 		
 		// Handle implicit pointer grab button presses

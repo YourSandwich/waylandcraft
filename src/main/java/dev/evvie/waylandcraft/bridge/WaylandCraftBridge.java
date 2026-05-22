@@ -5,8 +5,10 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -41,6 +43,12 @@ public class WaylandCraftBridge {
 	
 	private @Nullable Integer lastMoveRequestSerial = null;
 	private @Nullable ResizeRequest lastResizeRequest = null;
+
+	// Shared handle-0 surface for windows with no backing surface (an X11 window
+	// before the xwayland-shell association and while unmapped). It is never put
+	// in the surfaces list - it has no native pointer to free - and is inert:
+	// not alive, no buffer, zero size, no children.
+	private static final WLCSurface NO_SURFACE = new WLCSurface(0);
 	
 	static {
 		boolean loaded = false;
@@ -91,11 +99,11 @@ public class WaylandCraftBridge {
 			if(toplevel.getHandle() == handle) return toplevel;
 		}
 		WLCToplevel toplevel = new WLCToplevel(handle);
-		
-		long surfaceHandle = toplevelSurface(this.instance, handle);
-		WLCSurface surface = getOrCreateSurface(surfaceHandle);
-		toplevel.surface = surface;
-		
+		// resolveSurface, called every frame including this one, sets the real
+		// surface; the window starts surface-less so an X11 toplevel that has
+		// no surface yet is not churned.
+		toplevel.surface = NO_SURFACE;
+
 		toplevels.add(toplevel);
 		return toplevel;
 	}
@@ -112,13 +120,11 @@ public class WaylandCraftBridge {
 			if(popup.getHandle() == handle) return popup;
 		}
 		WLCPopup popup = new WLCPopup(handle);
-		
-		long surfaceHandle = popupSurface(this.instance, handle);
-		WLCSurface surface = getOrCreateSurface(surfaceHandle);
-		popup.surface = surface;
-		
+		// As with getOrCreateToplevel: resolveSurface sets the real surface.
+		popup.surface = NO_SURFACE;
+
 		popup.parentHandle = popupParent(this.instance, handle);
-		
+
 		popups.add(popup);
 		return popup;
 	}
@@ -195,6 +201,19 @@ public class WaylandCraftBridge {
 		this.surfaces = surfaces_new;
 	}
 	
+	// Re-resolve a window's backing surface against the freshly queried handle.
+	// An X11 window has no surface before the async xwayland-shell association
+	// and loses it again on every unmap - smithay resets wl_surface() on each
+	// X11 UnmapNotify - so the handle moves between the real surface and the
+	// handle-0 surface over the window's life. This is honest per-frame
+	// resolution: no holding, no frame counting. A window with no surface this
+	// frame is surfaceless this frame; its framebuffer persists regardless (see
+	// updateFramebuffers) and renders empty. For Wayland windows the handle is
+	// stable frame to frame and this is a no-op.
+	private void resolveSurface(WLCAbstractWindow window, long surfaceHandle) {
+		window.surface = surfaceHandle == 0 ? NO_SURFACE : getOrCreateSurface(surfaceHandle);
+	}
+
 	private void findPopupParent(WLCPopup popup) {
 		// Popups cannot change their parent, so if one is found, it's the one
 		if(popup.parent != null) return;
@@ -213,7 +232,7 @@ public class WaylandCraftBridge {
 			}
 		}
 	}
-	
+
 	public void update() {
 		ProfilerFiller profiler = Profiler.get();
 		profiler.push("wayland");
@@ -258,6 +277,7 @@ public class WaylandCraftBridge {
 		// Update surface tree geometry and properties of all toplevels
 		for(long handle : toplevelHandles) {
 			WLCToplevel toplevel = getOrCreateToplevel(handle);
+			resolveSurface(toplevel, toplevelSurface(this.instance, handle));
 			WLCSurface root = toplevel.getSurfaceTree();
 			toplevel.lastChild = updateSurfaceTree(root);
 			
@@ -278,9 +298,10 @@ public class WaylandCraftBridge {
 		// Update surface tree geometry, parent relationships and offsets of all popups
 		for(long handle : popupHandles) {
 			WLCPopup popup = getOrCreatePopup(handle);
+			resolveSurface(popup, popupSurface(this.instance, handle));
 			findPopupParent(popup);
 			
-			int[] offset = popupOffset(handle);
+			int[] offset = popupOffset(instance, handle);
 			popup.offsetX = offset[0];
 			popup.offsetY = offset[1];
 			
@@ -288,7 +309,7 @@ public class WaylandCraftBridge {
 			popup.lastChild = updateSurfaceTree(root);
 			updateGeometry(popup);
 		}
-		
+
 		long dndIconHandle = dndIcon(instance);
 		if(dndIconHandle != 0) {
 			WLCSurface dndIconSurface = getOrCreateSurface(dndIconHandle);
@@ -338,7 +359,7 @@ public class WaylandCraftBridge {
 		profiler.push("framebuffer");
 		updateFramebuffers();
 		profiler.pop();
-		
+
 		deleteNonExistingDmabufs(dmabufs(instance));
 		
 		updateFocusOrder();
@@ -353,37 +374,49 @@ public class WaylandCraftBridge {
 	
 	private void updateFramebuffers() {
 		List<WLCAbstractWindow> allWindows = Stream.of(toplevels, popups).flatMap((l) -> l.stream()).collect(Collectors.toList());
-		
-		// Render windows
+
+		// One framebuffer per window for its whole life. It is created once,
+		// when the window first has renderable content (a live surface tree),
+		// and destroyed once, when the window is gone (see the cleanup below).
+		// It is never destroyed/recreated on a surface change: each frame it is
+		// re-pointed at the window's current surface tree and re-rendered into
+		// the SAME target under the SAME texture Identifier. A window that is
+		// currently surfaceless (an X11 window between unmap and remap) keeps
+		// its framebuffer and renders empty/transparent - no texture churn.
 		for(WLCAbstractWindow window : allWindows) {
 			if(window.framebuffer == null) {
+				if(window.getSurfaceTree() == null || !window.getSurfaceTree().isAlive()) continue;
 				window.framebuffer = new WindowFramebuffer(window.getSurfaceTree());
 				framebuffers.add(window.framebuffer);
 			}
+			window.framebuffer.setSurfaceTree(window.getSurfaceTree());
 			window.framebuffer.render();
 		}
-		
+
 		// Render dnd icon
 		if(dndIcon != null) {
 			if(dndIcon.framebuffer == null) {
 				dndIcon.framebuffer = new WindowFramebuffer(dndIcon.surface);
 				framebuffers.add(dndIcon.framebuffer);
 			}
+			dndIcon.framebuffer.setSurfaceTree(dndIcon.surface);
 			dndIcon.framebuffer.render();
 		}
-		
-		// Cleanup unused framebuffers
-		ArrayList<WindowFramebuffer> usedFramebuffers = new ArrayList<WindowFramebuffer>();
+
+		// Cleanup framebuffers no longer owned by a live window or the dnd icon.
+		// Keyed on the owning window, not surfaceTree liveness: a tracked X11
+		// window keeps its framebuffer across an unmap and loses it only when
+		// the window itself is gone.
+		Set<WindowFramebuffer> usedFramebuffers = new HashSet<WindowFramebuffer>();
+		for(WLCAbstractWindow window : allWindows) {
+			if(window.framebuffer != null) usedFramebuffers.add(window.framebuffer);
+		}
+		if(dndIcon != null && dndIcon.framebuffer != null) usedFramebuffers.add(dndIcon.framebuffer);
 		for(WindowFramebuffer framebuffer : framebuffers) {
-			if(framebuffer.surfaceTree.isAlive()) {
-				usedFramebuffers.add(framebuffer);
-			}
-			else {
-				framebuffer.destroy();
-			}
+			if(!usedFramebuffers.contains(framebuffer)) framebuffer.destroy();
 		}
 		framebuffers.retainAll(usedFramebuffers);
-		
+
 		WindowFramebuffer.endFrame();
 	}
 	
@@ -548,7 +581,7 @@ public class WaylandCraftBridge {
 	}
 	
 	public void fullscreenToplevel(WLCToplevel toplevel) {
-		toplevelFullscreen(instance, toplevel.getHandle());
+		toplevelFullscreen(instance, toplevel.getHandle(), toplevel.geometry.width(), toplevel.geometry.height());
 	}
 	
 	public Integer checkMoveRequest() {
@@ -590,6 +623,11 @@ public class WaylandCraftBridge {
 	public RawDesktopEntry[] loadSystemDesktopEntries() {
 		return loadDesktopEntries(instance);
 	}
+
+	public @Nullable String resolveAppID(String appId) {
+		if(appId == null) return null;
+		return resolveAppID(instance, appId);
+	}
 	
 	public boolean renderSVG(File file, int width, int height, long ptr) {
 		return renderSVG(file.getAbsolutePath(), width, height, ptr);
@@ -616,7 +654,13 @@ public class WaylandCraftBridge {
 		if(serial == null) return null;
 		return serial[0];
 	}
-	
+
+	// True while an X11 app is dragging onto WaylandCraft (Stage C). Polled to
+	// start/stop an in-world X11DNDGrab that drives the Wayland target.
+	public boolean isX11DndActive() {
+		return checkX11Dnd(instance);
+	}
+
 	public void dndCancel() {
 		dndCancel(instance);
 	}
@@ -670,7 +714,7 @@ public class WaylandCraftBridge {
 	private static native long[] fullscreened(long instance);
 	
 	private static native void toplevelMaximize(long instance, long handle);
-	private static native void toplevelFullscreen(long instance, long handle);
+	private static native void toplevelFullscreen(long instance, long handle, int width, int height);
 	
 	private static native long[] popups(long instance);
 	private static native long popupSurface(long instance, long handle);
@@ -679,7 +723,7 @@ public class WaylandCraftBridge {
 	private static native long popupParent(long instance, long handle);
 	// Query popup local offset coordinates
 	// Returns two-element list containing x,y
-	private static native int[] popupOffset(long handle);
+	private static native int[] popupOffset(long instance, long handle);
 	
 	// Query the xdg_surface window geometry of a toplevel or popup.
 	// handle should be the handle to the root WLCSurface
@@ -748,6 +792,8 @@ public class WaylandCraftBridge {
 	
 	private static native RawDesktopEntry loadDesktopEntry(long instance, String path);
 	private static native RawDesktopEntry[] loadDesktopEntries(long instance);
+	// Resolve a Wayland app-id or X11 WM_CLASS to a desktop-entry id, or null
+	private static native String resolveAppID(long instance, String appId);
 	
 	private static native boolean renderSVG(String path, int width, int height, long ptr);
 	
@@ -759,6 +805,8 @@ public class WaylandCraftBridge {
 	
 	private static native int[] checkDndRequest(long instance);
 	private static native boolean checkDndActive(long instance);
+	// True while an X11-initiated drag is in flight onto WaylandCraft
+	private static native boolean checkX11Dnd(long instance);
 	private static native void dndCancel(long instance);
 	private static native void dndDrop(long instance);
 	private static native void dndMotion(long instance, long surface, double x, double y);

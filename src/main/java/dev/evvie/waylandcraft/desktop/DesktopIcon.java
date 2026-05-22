@@ -52,7 +52,7 @@ public class DesktopIcon {
 				FileInputStream stream = new FileInputStream(file);
 				this.image = IconImage.standard(NativeImage.read(stream));
 			} catch(IOException e) {
-				e.printStackTrace();
+				WaylandCraft.LOGGER.warn("Skipping desktop icon, not a valid PNG: {} ({})", path, e.getMessage());
 			}
 		}
 		else if(getExtension(file).equals("svg")) {

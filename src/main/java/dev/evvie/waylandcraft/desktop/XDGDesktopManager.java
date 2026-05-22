@@ -74,9 +74,19 @@ public class XDGDesktopManager {
 		if(!completeFetch()) {
 			return null;
 		}
-		
+
 		for(DesktopEntry entry : systemEntries) {
 			if(entry.appId.equals(appId)) return entry;
+		}
+
+		// No exact match on the entry id. The app-id may be an X11 WM_CLASS
+		// (e.g. "Ardour-9.2.0"); resolve it against StartupWMClass and the
+		// other freedesktop matching rules.
+		String resolved = wlc.bridge.resolveAppID(appId);
+		if(resolved == null || resolved.equals(appId)) return null;
+
+		for(DesktopEntry entry : systemEntries) {
+			if(entry.appId.equals(resolved)) return entry;
 		}
 		return null;
 	}

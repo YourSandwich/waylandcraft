@@ -85,7 +85,7 @@ public class WindowManagerScreen extends Screen {
 		selector = new SelectorWidget<WLCToplevel>(leftMargin - 1, topMargin - 17, areaWidth + 2, 17) {
 			@Override
 			public Component titleForElement(WLCToplevel element) {
-				return Component.literal(Optional.ofNullable(element.title).or(() -> Optional.ofNullable(element.appID)).orElse(""));
+				return Component.literal(Optional.ofNullable(element.displayName()).orElse(""));
 			}
 			
 			@Override
@@ -168,7 +168,7 @@ public class WindowManagerScreen extends Screen {
 	}
 	
 	private void onResizePressed(Button button) {
-		if(focused == null || focused.fullscreen) return;
+		if(focused == null) return;
 		
 		wlc.bridge.sendMotionOutside();
 		GLFW.glfwSetInputMode(Minecraft.getInstance().getWindow().handle(), GLFW.GLFW_CURSOR, GLFW.GLFW_CURSOR_DISABLED);
@@ -307,11 +307,6 @@ public class WindowManagerScreen extends Screen {
 		
 		buttons.forEach((b) -> b.visible = true);
 		selector.visible = true;
-		
-		if(focused != null && focused.fullscreen) {
-			buttons.forEach((b) -> b.visible = false);
-			selector.visible = false;
-		}
 		
 		super.extractRenderState(context, i, j, f);
 	}
@@ -527,14 +522,8 @@ public class WindowManagerScreen extends Screen {
 		float x;
 		float y;
 		
-		if(!toplevel.fullscreen) {
-			x = leftMargin * guiScale + Math.max(0, areaWidth * guiScale / 2 - toplevel.geometry.width() / 2);
-			y = topMargin * guiScale + Math.max(0, areaHeight * guiScale / 2 - toplevel.geometry.height() / 2);
-		}
-		else {
-			x = 0;
-			y = 0;
-		}
+		x = leftMargin * guiScale + Math.max(0, areaWidth * guiScale / 2 - toplevel.geometry.width() / 2);
+		y = topMargin * guiScale + Math.max(0, areaHeight * guiScale / 2 - toplevel.geometry.height() / 2);
 		
 		x -= toplevel.geometry.x();
 		y -= toplevel.geometry.y();

@@ -13,13 +13,135 @@ use smithay::reexports::wayland_server::{
         wl_surface::WlSurface,
     },
 };
+use smithay::wayland::selection::SelectionTarget;
 use std::ops::DerefMut;
 use std::os::fd::AsFd;
 use std::sync::{Arc, Mutex};
 
+// The clipboard selection's data provider. A Wayland client owns its selection
+// through a WlDataSource; an X11 (Xwayland) client has no Wayland source, so its
+// selection is represented by the mime types it offered, with reads serviced by
+// X11Wm::send_selection. See the X11<->Wayland clipboard bridge in xwayland.rs.
+#[derive(Clone)]
+pub enum ClipboardSource {
+    Wayland(WlDataSource),
+    X11 { mime: Vec<String> },
+}
+
+impl ClipboardSource {
+    pub fn mime(&self) -> Vec<String> {
+        match self {
+            ClipboardSource::Wayland(s) => {
+                with_source_data(s, |d| d.mime.clone())
+            }
+            ClipboardSource::X11 { mime } => mime.clone(),
+        }
+    }
+
+    // A Wayland source is gone once its WlDataSource dies; an X11 selection has
+    // no resource to outlive and is dropped explicitly by the bridge.
+    fn is_alive(&self) -> bool {
+        match self {
+            ClipboardSource::Wayland(s) => s.is_alive(),
+            ClipboardSource::X11 { .. } => true,
+        }
+    }
+
+    pub fn wayland(&self) -> Option<&WlDataSource> {
+        match self {
+            ClipboardSource::Wayland(s) => Some(s),
+            ClipboardSource::X11 { .. } => None,
+        }
+    }
+}
+
+// A drag's data provider. A Wayland-initiated drag carries a WlDataSource; an
+// X11-initiated drag (Xwayland app dragging onto a Wayland app) has no Wayland
+// source, so it is represented by the offered mime types, the drag actions, and
+// the X11 source window. Reads of an X11 drag are serviced by the XDND bridge
+// (xdnd.rs) via convert_selection. Mirrors ClipboardSource for the DnD path.
+#[derive(Clone)]
+pub enum DndSource {
+    Wayland(WlDataSource),
+    X11 {
+        mimes: Vec<String>,
+        actions: DndAction,
+        source_window: u32,
+    },
+}
+
+impl DndSource {
+    pub fn mime(&self) -> Vec<String> {
+        match self {
+            DndSource::Wayland(s) => with_source_data(s, |d| d.mime.clone()),
+            DndSource::X11 { mimes, .. } => mimes.clone(),
+        }
+    }
+
+    pub fn actions(&self) -> DndAction {
+        match self {
+            DndSource::Wayland(s) => with_source_data(s, |d| d.actions),
+            DndSource::X11 { actions, .. } => *actions,
+        }
+    }
+
+    // A Wayland source dies with its WlDataSource; an X11 drag has no resource
+    // to outlive and is dropped explicitly by the XDND bridge.
+    fn is_alive(&self) -> bool {
+        match self {
+            DndSource::Wayland(s) => s.is_alive(),
+            DndSource::X11 { .. } => true,
+        }
+    }
+
+    pub fn wayland(&self) -> Option<&WlDataSource> {
+        match self {
+            DndSource::Wayland(s) => Some(s),
+            DndSource::X11 { .. } => None,
+        }
+    }
+
+    // Tell the source the negotiated mime type (Wayland sources only - an X11
+    // drag's accepted type is tracked in WLCDndEvent.mime, the X11 source is not
+    // a Wayland resource and has no target() request).
+    fn target(&self, mime: Option<String>) {
+        if let DndSource::Wayland(s) = self {
+            s.target(mime);
+        }
+    }
+
+    // Tell the source the chosen action (Wayland sources only).
+    pub fn action(&self, action: DndAction) {
+        if let DndSource::Wayland(s) = self {
+            s.action(action);
+        }
+    }
+
+    // Signal the drop was performed (Wayland sources only).
+    pub fn dnd_drop_performed(&self) {
+        if let DndSource::Wayland(s) = self {
+            s.dnd_drop_performed();
+        }
+    }
+
+    // Signal the target finished consuming the drop (Wayland sources only).
+    pub fn dnd_finished(&self) {
+        if let DndSource::Wayland(s) = self {
+            s.dnd_finished();
+        }
+    }
+
+    // Signal the drag was cancelled (Wayland sources only).
+    fn cancelled(&self) {
+        if let DndSource::Wayland(s) = self {
+            s.cancelled();
+        }
+    }
+}
+
 pub struct WLCDataState {
     pub devices: Vec<WlDataDevice>,
-    pub clipboard: Option<WlDataSource>,
+    pub clipboard: Option<ClipboardSource>,
     pub clipboard_focus: Option<Client>,
     pub dnd: Option<WLCDndEvent>,
     display_handle: DisplayHandle,
@@ -30,8 +152,11 @@ pub struct WLCDataState {
 pub struct WLCDndEvent {
     pub start_serial: u32,
     pub request_sent: bool,
+    // The client that started the drag. For an X11-sourced drag there is no
+    // Wayland drag client; the Xwayland client is used so the cross-client
+    // suppression in dnd_motion treats every Wayland surface as a valid target.
     pub client: Client,
-    pub source: Option<WlDataSource>,
+    pub source: Option<DndSource>,
     pub icon: Option<WlSurface>,
     pub focus: Option<WlSurface>,
     pub mime: Option<String>,
@@ -53,11 +178,47 @@ struct WLCDataSourceData {
     actions: DndAction,
 }
 
+// A wl_data_offer backs either a clipboard selection or a drag. The two carry
+// different source types (ClipboardSource has no actions; DndSource does), so
+// the offer keeps whichever applies. Both can be Wayland- or X11-backed.
+enum OfferSource {
+    Clipboard(ClipboardSource),
+    Dnd(DndSource),
+}
+
+impl OfferSource {
+    fn mime(&self) -> Vec<String> {
+        match self {
+            OfferSource::Clipboard(s) => s.mime(),
+            OfferSource::Dnd(s) => s.mime(),
+        }
+    }
+
+    fn is_alive(&self) -> bool {
+        match self {
+            OfferSource::Clipboard(s) => s.is_alive(),
+            OfferSource::Dnd(s) => s.is_alive(),
+        }
+    }
+}
+
 type WLCDataOffer = Arc<Mutex<WLCDataOfferData>>;
 struct WLCDataOfferData {
-    // NOTE: The source is in the id space of the source client!!
-    source: WlDataSource,
+    // A clipboard offer or a drag offer, each either Wayland- or X11-backed.
+    source: OfferSource,
     device: WlDataDevice,
+}
+
+impl WLCDataOfferData {
+    // The Wayland data source behind a DnD offer, if it is Wayland-backed. An
+    // X11 drag and every clipboard offer return None - those go through their
+    // own bridge paths and have no WlDataSource to drive directly.
+    fn wl_source(&self) -> Option<&WlDataSource> {
+        match &self.source {
+            OfferSource::Dnd(DndSource::Wayland(s)) => Some(s),
+            _ => None,
+        }
+    }
 }
 
 type WLCDataDevice = Arc<Mutex<WLCDataDeviceData>>;
@@ -76,6 +237,12 @@ where
     let mut guard = source.data::<WLCDataSource>().unwrap().lock().unwrap();
     let data = guard.deref_mut();
     f(data)
+}
+
+// The mime types a Wayland data source offers. Used by the XDND source bridge
+// (xdnd.rs) to advertise and serve a Wayland drag's types to an X11 target.
+pub fn data_source_mime(source: &WlDataSource) -> Vec<String> {
+    with_source_data(source, |d| d.mime.clone())
 }
 
 fn with_offer_data<F, R>(offer: &WlDataOffer, f: F) -> R
@@ -112,6 +279,25 @@ impl WLCDataState {
             .create_global::<WLCState, WlDDM, ()>(3, ());
     }
 
+    // Replace the clipboard selection: cancel the outgoing Wayland source (if
+    // any), store the new one, and re-offer to the focused client. Shared by
+    // the Wayland SetSelection path and the X11 clipboard bridge.
+    pub fn set_clipboard(&mut self, source: Option<ClipboardSource>) {
+        if let Some(ClipboardSource::Wayland(old)) = &self.clipboard {
+            old.cancelled();
+        }
+        self.clipboard = source;
+        self.send_clipboard();
+    }
+
+    // The current clipboard selection, dropping it first if its source died.
+    pub fn clipboard(&mut self) -> Option<&ClipboardSource> {
+        if self.clipboard.as_ref().is_some_and(|c| !c.is_alive()) {
+            self.clipboard = None;
+        }
+        self.clipboard.as_ref()
+    }
+
     pub fn update_clipboard_client(&mut self, client: Option<Client>) {
         if self.clipboard_focus != client {
             self.clipboard_focus = client;
@@ -134,7 +320,7 @@ impl WLCDataState {
 
             if let Some(clipboard) = &self.clipboard {
                 let offer_data = WLCDataOfferData {
-                    source: clipboard.clone(),
+                    source: OfferSource::Clipboard(clipboard.clone()),
                     device: device.clone(),
                 };
                 let offer_data = Arc::new(Mutex::new(offer_data));
@@ -147,11 +333,9 @@ impl WLCDataState {
                     .unwrap();
 
                 device.data_offer(&offer);
-                with_source_data(clipboard, |data| {
-                    for m in data.mime.iter().cloned() {
-                        offer.offer(m);
-                    }
-                });
+                for m in clipboard.mime() {
+                    offer.offer(m);
+                }
                 device.selection(Some(&offer));
             } else {
                 device.selection(None);
@@ -178,9 +362,16 @@ impl WLCDataState {
         let _ = header;
     }
 
+    // The serial of a freshly started Wayland drag, once, for the JNI bridge to
+    // match against an implicit pointer grab. An X11-sourced drag (Stage C) is
+    // not a Wayland start_drag - it has no implicit grab to match and is driven
+    // by its own poll path, so it is never reported here.
     pub fn check_dnd_request(&mut self) -> Option<u32> {
         let dnd = self.dnd.as_mut()?;
         if dnd.request_sent {
+            return None;
+        }
+        if matches!(dnd.source, Some(DndSource::X11 { .. })) {
             return None;
         }
         dnd.request_sent = true;
@@ -189,7 +380,7 @@ impl WLCDataState {
 
     fn dnd_send_offer(
         &self,
-        source: &WlDataSource,
+        source: &DndSource,
         device: &WlDataDevice,
         data: &mut WLCDataDeviceData,
     ) -> WlDataOffer {
@@ -197,7 +388,7 @@ impl WLCDataState {
 
         // Create offer
         let offer_data = WLCDataOfferData {
-            source: source.clone(),
+            source: OfferSource::Dnd(source.clone()),
             device: device.clone(),
         };
         let offer_data = Arc::new(Mutex::new(offer_data));
@@ -212,12 +403,10 @@ impl WLCDataState {
 
         // Send offer to client
         device.data_offer(&offer);
-        with_source_data(source, |data| {
-            for m in data.mime.iter().cloned() {
-                offer.offer(m);
-            }
-            offer.source_actions(data.actions);
-        });
+        for m in source.mime() {
+            offer.offer(m);
+        }
+        offer.source_actions(source.actions());
 
         offer
     }
@@ -467,7 +656,9 @@ impl Dispatch<WlDataSource, WLCDataSource> for WLCState {
                     Some(d) => d,
                     None => return,
                 };
-                if Some(source) == dnd.source.as_ref() {
+                if dnd.source.as_ref().and_then(|s| s.wayland())
+                    == Some(source)
+                {
                     state.data.print_dnd_debug("data source destroy");
                     state.data.unfocus_devices();
                     state.data.dnd = None;
@@ -488,8 +679,9 @@ impl Dispatch<WlDataSource, WLCDataSource> for WLCState {
                         return;
                     }
                     let offer = data.dnd_offer.as_ref().unwrap();
-                    let matches_source =
-                        with_offer_data(offer, |data| data.source == *source);
+                    let matches_source = with_offer_data(offer, |data| {
+                        data.wl_source() == Some(source)
+                    });
                     if matches_source {
                         offer.source_actions(actions);
                     }
@@ -505,11 +697,14 @@ impl Dispatch<WlDataSource, WLCDataSource> for WLCState {
         source: &WlDataSource,
         _data: &WLCDataSource,
     ) {
-        if state.data.clipboard.as_ref().is_some_and(|c| c == source) {
+        if matches!(
+            &state.data.clipboard,
+            Some(ClipboardSource::Wayland(c)) if c == source
+        ) {
             state.data.clipboard = None;
         }
         if let Some(dnd) = &state.data.dnd
-            && Some(source) == dnd.source.as_ref()
+            && dnd.source.as_ref().and_then(|s| s.wayland()) == Some(source)
         {
             state.data.unfocus_devices();
             state.data.dnd = None;
@@ -561,7 +756,7 @@ impl Dispatch<WlDataDevice, WLCDataDevice> for WLCState {
                     start_serial: serial,
                     request_sent: false,
                     client: client.clone(),
-                    source: source.clone(),
+                    source: source.clone().map(DndSource::Wayland),
                     icon: icon.clone(),
                     focus: None,
                     mime: None,
@@ -598,11 +793,12 @@ impl Dispatch<WlDataDevice, WLCDataDevice> for WLCState {
                     });
                 }
 
-                if let Some(old_clipboard) = &state.data.clipboard {
-                    old_clipboard.cancelled();
-                }
-                state.data.clipboard = source;
-                state.data.send_clipboard();
+                state.data.set_clipboard(
+                    source.map(ClipboardSource::Wayland),
+                );
+                // Mirror the new Wayland selection onto the X11 side so X11
+                // (Xwayland) apps can paste it.
+                crate::xwayland::bridge_wayland_selection_to_x11(state);
             }
             wl_data_device::Request::Release => {}
             _ => unreachable!(),
@@ -631,34 +827,92 @@ impl Dispatch<WlDataOffer, WLCDataOffer> for WLCState {
     ) {
         match request {
             wl_data_offer::Request::Receive { mime_type, fd } => {
-                with_offer_data(offer, |data| {
-                    if !data.source.is_alive() {
-                        return;
+                enum Routed {
+                    Wayland(WlDataSource),
+                    X11Clipboard,
+                    X11Dnd,
+                    None,
+                }
+                let routed = with_offer_data(offer, |data| {
+                    if !data.source.is_alive()
+                        || !data.source.mime().contains(&mime_type)
+                    {
+                        return Routed::None;
                     }
-
-                    let mime = with_source_data(&data.source, |source_data| {
-                        source_data.mime.clone()
-                    });
-
-                    if !mime.contains(&mime_type) {
-                        return;
+                    match &data.source {
+                        OfferSource::Clipboard(ClipboardSource::Wayland(s))
+                        | OfferSource::Dnd(DndSource::Wayland(s)) => {
+                            Routed::Wayland(s.clone())
+                        }
+                        OfferSource::Clipboard(ClipboardSource::X11 { .. }) => {
+                            Routed::X11Clipboard
+                        }
+                        OfferSource::Dnd(DndSource::X11 { .. }) => {
+                            Routed::X11Dnd
+                        }
                     }
-
-                    data.source.send(mime_type, fd.as_fd());
                 });
+                match routed {
+                    Routed::Wayland(s) => s.send(mime_type, fd.as_fd()),
+                    // The selection is X11-owned: an X11 app copied. Hand the
+                    // Wayland client's read fd to Xwayland, which writes the
+                    // requested mime type into it.
+                    Routed::X11Clipboard => {
+                        if let Some(xwm) = state.xwm.as_mut() {
+                            let _ = xwm.send_selection(
+                                SelectionTarget::Clipboard,
+                                mime_type,
+                                fd,
+                            );
+                        }
+                    }
+                    // The drag is X11-sourced: convert the XdndSelection from
+                    // the X11 source into the Wayland client's fd. See xdnd.rs.
+                    Routed::X11Dnd => {
+                        state.xdnd_target_receive(mime_type, fd);
+                    }
+                    Routed::None => {}
+                }
             }
             wl_data_offer::Request::Accept { mime_type, .. } => {
                 let dnd = match &mut state.data.dnd {
                     Some(d) => d,
                     None => return,
                 };
-                with_offer_data(offer, |data| {
-                    if Some(&data.source) != dnd.source.as_ref() {
-                        return;
+                // The accepted type belongs to the offer's own drag. A Wayland
+                // source is told via target(); an X11 source has no Wayland
+                // resource, so only WLCDndEvent.mime is recorded (the XDND
+                // bridge reads it for the XdndStatus accept flag).
+                let owns_drag = with_offer_data(offer, |data| {
+                    match (&data.source, dnd.source.as_ref()) {
+                        (
+                            OfferSource::Dnd(DndSource::Wayland(src)),
+                            Some(DndSource::Wayland(cur)),
+                        ) => src == cur,
+                        (
+                            OfferSource::Dnd(DndSource::X11 { .. }),
+                            Some(DndSource::X11 { .. }),
+                        ) => true,
+                        _ => false,
                     }
-                    data.source.target(mime_type.clone());
-                    dnd.mime = mime_type;
                 });
+                if !owns_drag {
+                    return;
+                }
+                if let Some(src) = dnd.source.as_ref() {
+                    src.target(mime_type.clone());
+                }
+                dnd.mime = mime_type;
+                // An X11-sourced drag's accept state just changed - push a
+                // fresh XdndStatus to the X11 source so it learns the drop
+                // became allowed even if its cursor is held still.
+                let is_x11 = matches!(
+                    dnd.source.as_ref(),
+                    Some(DndSource::X11 { .. })
+                );
+                if is_x11 {
+                    state.xdnd_target_refresh_status();
+                }
             }
             wl_data_offer::Request::Destroy => {
                 with_offer_data(offer, |data| {
@@ -670,9 +924,21 @@ impl Dispatch<WlDataOffer, WLCDataOffer> for WLCState {
                 });
             }
             wl_data_offer::Request::Finish => {
-                with_offer_data(offer, |data| {
-                    data.source.dnd_finished();
+                // A Wayland drag source is told directly; an X11-sourced drag
+                // has its XdndFinished sent and is torn down by the bridge.
+                let is_x11 = with_offer_data(offer, |data| {
+                    match &data.source {
+                        OfferSource::Dnd(DndSource::Wayland(s)) => {
+                            s.dnd_finished();
+                            false
+                        }
+                        OfferSource::Dnd(DndSource::X11 { .. }) => true,
+                        OfferSource::Clipboard(_) => false,
+                    }
                 });
+                if is_x11 {
+                    state.xdnd_target_finished();
+                }
             }
             wl_data_offer::Request::SetActions {
                 dnd_actions,
@@ -688,7 +954,10 @@ impl Dispatch<WlDataOffer, WLCDataOffer> for WLCState {
                 };
 
                 let source_actions = with_offer_data(offer, |data| {
-                    with_source_data(&data.source, |sdata| sdata.actions)
+                    match &data.source {
+                        OfferSource::Dnd(s) => s.actions(),
+                        OfferSource::Clipboard(_) => DndAction::None,
+                    }
                 });
 
                 let actions = dnd_actions & source_actions;
@@ -713,12 +982,21 @@ impl Dispatch<WlDataOffer, WLCDataOffer> for WLCState {
                 };
                 dnd.action = action;
 
-                if dnd.source.is_none() {
-                    return;
-                }
+                let source = match dnd.source.as_ref() {
+                    Some(s) => s,
+                    None => return,
+                };
 
                 offer.action(dnd.action);
-                dnd.source.as_ref().unwrap().action(dnd.action);
+                // No-op for an X11 source - the chosen action surfaces to the
+                // X11 source as the XdndStatus action atom, not here.
+                source.action(dnd.action);
+
+                // An X11-sourced drag's action just changed - refresh the
+                // XdndStatus so the X11 source sees the new action.
+                if matches!(source, DndSource::X11 { .. }) {
+                    state.xdnd_target_refresh_status();
+                }
             }
             _ => unreachable!(),
         }

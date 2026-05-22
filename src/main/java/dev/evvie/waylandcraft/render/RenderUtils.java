@@ -109,8 +109,6 @@ public class RenderUtils {
 			.build();
 	
 	public static void renderFramebuffer(WindowFramebuffer framebuffer, PoseStack poseStack, SubmitNodeCollector collector, boolean cutout, Vec3 tl, Vec3 bl, Vec3 br, Vec3 tr) {
-		if(!framebuffer.isValid()) return;
-		
 		Function<Identifier, RenderType> renderType;
 		
 		// Front quad
@@ -143,7 +141,6 @@ public class RenderUtils {
 	}
 	
 	public static void renderFramebuffer2D(GuiGraphicsExtractor context, WindowFramebuffer framebuffer, int x, int y, int w, int h) {
-		if(!framebuffer.isValid()) return;
 		((IGuiGraphicsExtractor) context).invokeInnerBlit(WINDOW_BLIT, framebuffer.getTextureLocation(), x, x + w, y, y + h, 0.0f, 1.0f, 0.0f, 1.0f, -1);
 	}
 	

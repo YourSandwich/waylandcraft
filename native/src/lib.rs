@@ -5,9 +5,14 @@ use crate::output::WLCOutput;
 use crate::seat::WLCSeatState;
 use crate::xdg_spec::XDGSpecHelper;
 use smithay::{
-    backend::allocator::dmabuf::Dmabuf,
+    backend::{
+        allocator::dmabuf::Dmabuf,
+        renderer::utils::on_commit_buffer_handler,
+    },
     delegate_compositor, delegate_dmabuf, delegate_shm,
     delegate_single_pixel_buffer, delegate_viewporter, delegate_xdg_shell,
+    delegate_xwayland_shell,
+    input::{SeatHandler, SeatState, dnd::DndGrabHandler},
     reexports::{
         calloop::{self, EventLoop, generic::Generic as GenericEvent},
         wayland_protocols::xdg::shell::server::xdg_toplevel::ResizeEdge,
@@ -38,9 +43,15 @@ use smithay::{
         single_pixel_buffer::SinglePixelBufferState,
         socket::ListeningSocketSource,
         viewporter::ViewporterState,
+        xwayland_shell::{XWaylandShellHandler, XWaylandShellState},
+    },
+    xwayland::{
+        X11Surface, X11Wm, XWayland, XWaylandClientData, XWaylandEvent,
+        xwm::XwmId,
     },
 };
 use std::ffi::OsString;
+use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -53,6 +64,8 @@ mod seat;
 mod svg;
 mod utils;
 mod xdg_spec;
+mod xdnd;
+mod xwayland;
 
 pub(crate) struct WaylandCraft<'a> {
     pub state: WLCState,
@@ -76,6 +89,31 @@ pub struct WLCState {
     pub seat: WLCSeatState,
     pub data: WLCDataState,
     pub output: WLCOutput,
+    // Smithay SeatState - only exists to satisfy the SeatHandler bound on
+    // X11Wm::start_wm. No smithay Seat is created; seat.rs is the real seat.
+    pub seat_state: SeatState<WLCState>,
+    pub xwayland_shell_state: XWaylandShellState,
+    pub xwm: Option<X11Wm>,
+    pub xdisplay: Option<u32>,
+    // The XDND foundation: WaylandCraft's own X11 client connection driving
+    // X11<->Wayland drag-and-drop. None until Xwayland is up, or if the second
+    // connection fails to open - XDND is then simply unavailable. See xdnd.rs.
+    pub xdnd: Option<xdnd::XdndState>,
+    // A write-only X11 client connection used to set the X server's input
+    // focus when keyboard focus moves to an X11 window. None until Xwayland is
+    // up, or if the connection fails to open. See xwayland::X11FocusConn.
+    pub x11_focus: Option<xwayland::X11FocusConn>,
+    // X11 windows, tracked from map to unmap/destroy. toplevels() syncs
+    // bridge.toplevels from this list.
+    pub x11_windows: Vec<X11Surface>,
+    // X11 override-redirect windows (menus, tooltips, dropdowns). Kept apart
+    // from x11_windows so they reach the popup path, not the toplevel list;
+    // popups() syncs bridge.popups from this list.
+    pub x11_override_windows: Vec<X11Surface>,
+    // The X11 toplevel currently holding WaylandCraft's keyboard focus, if any.
+    // Holds the X11 Activated state so the previously focused X11 window can be
+    // deactivated on a focus change; see xwayland::sync_x11_focus.
+    pub focused_x11: Option<X11Surface>,
 }
 
 #[derive(Default)]
@@ -110,6 +148,8 @@ impl WLCState {
         let output = WLCOutput::new(&disp);
         output.create_global();
 
+        let xwayland_shell_state = XWaylandShellState::new::<WLCState>(&disp);
+
         Self {
             display_handle: disp.clone(),
             socket: OsString::new(),
@@ -124,6 +164,15 @@ impl WLCState {
             seat,
             data,
             output,
+            seat_state: SeatState::new(),
+            xwayland_shell_state,
+            xwm: None,
+            xdisplay: None,
+            xdnd: None,
+            x11_focus: None,
+            x11_windows: vec![],
+            x11_override_windows: vec![],
+            focused_x11: None,
         }
     }
 }
@@ -154,10 +203,21 @@ impl CompositorHandler for WLCState {
         &self,
         client: &'a wayland_server::Client,
     ) -> &'a CompositorClientState {
+        // The Xwayland client carries XWaylandClientData, not WLCClient.
+        if let Some(data) = client.get_data::<XWaylandClientData>() {
+            return &data.compositor_state;
+        }
         &client.get_data::<WLCClient>().unwrap().compositor_state
     }
 
-    fn commit(&mut self, _surface: &WlSurface) {}
+    fn commit(&mut self, surface: &WlSurface) {
+        // Hand buffer management to smithay: this builds a per-surface
+        // RendererSurfaceState that holds the wl_buffer in a refcounted
+        // Buffer and sends wl_buffer.release only once a newer buffer
+        // supersedes it (or the surface is destroyed). The render thread
+        // then reads that state read-only; see bridge::updateSurfaceData.
+        on_commit_buffer_handler::<WLCState>(surface);
+    }
 }
 
 impl BufferHandler for WLCState {
@@ -266,6 +326,36 @@ impl XdgShellHandler for WLCState {
     }
 }
 
+// Required by X11Wm::start_wm. WaylandCraft has no smithay Seat, so the focus
+// types are never actually used - X11Surface is the minimal type satisfying the
+// PointerFocus: DndFocus bound without pulling in DataDeviceHandler (which a
+// WlSurface focus would, colliding with the hand-rolled ddm.rs).
+impl SeatHandler for WLCState {
+    type KeyboardFocus = X11Surface;
+    type PointerFocus = X11Surface;
+    type TouchFocus = X11Surface;
+
+    fn seat_state(&mut self) -> &mut SeatState<WLCState> {
+        &mut self.seat_state
+    }
+}
+
+impl DndGrabHandler for WLCState {}
+
+impl XWaylandShellHandler for WLCState {
+    fn xwayland_shell_state(&mut self) -> &mut XWaylandShellState {
+        &mut self.xwayland_shell_state
+    }
+
+    fn surface_associated(
+        &mut self,
+        _xwm: XwmId,
+        _surface: WlSurface,
+        _window: X11Surface,
+    ) {
+    }
+}
+
 pub(crate) struct WLCClient {
     compositor_state: CompositorClientState,
 }
@@ -320,6 +410,8 @@ pub(crate) fn wlc_init(
         })
         .unwrap();
 
+    spawn_xwayland(&ev_handle, &state.display_handle);
+
     let xdg = XDGSpecHelper::init();
 
     let instance = WaylandCraft {
@@ -330,6 +422,79 @@ pub(crate) fn wlc_init(
         xdg,
     };
     Ok(instance)
+}
+
+fn spawn_xwayland(
+    handle: &calloop::LoopHandle<'static, WLCState>,
+    display: &DisplayHandle,
+) {
+    let (xwayland, client) = match XWayland::spawn(
+        display,
+        None,
+        std::iter::empty::<(String, String)>(),
+        true,
+        Stdio::null(),
+        Stdio::null(),
+        |_| (),
+    ) {
+        Ok(xwayland) => xwayland,
+        Err(err) => {
+            println!("[waylandcraft] failed to spawn Xwayland: {}", err);
+            return;
+        }
+    };
+
+    let display = display.clone();
+    let loop_handle = handle.clone();
+    let ret = handle.insert_source(xwayland, move |event, _, state| match event {
+        XWaylandEvent::Ready {
+            x11_socket,
+            display_number,
+        } => {
+            let wm = match X11Wm::start_wm(
+                loop_handle.clone(),
+                &display,
+                x11_socket,
+                client.clone(),
+            ) {
+                Ok(wm) => wm,
+                Err(err) => {
+                    println!("[waylandcraft] failed to start X11 WM: {}", err);
+                    return;
+                }
+            };
+            state.xwm = Some(wm);
+            state.xdisplay = Some(display_number);
+            println!("[waylandcraft] Xwayland ready on display :{}", display_number);
+
+            // Open the X11 input-focus connection. A failure here is non-fatal:
+            // X11 windows just will not receive X11 input focus.
+            match xwayland::X11FocusConn::create(display_number) {
+                Ok(focus_conn) => state.x11_focus = Some(focus_conn),
+                Err(err) => println!(
+                    "[waylandcraft] X11 focus connection failed: {}",
+                    err
+                ),
+            }
+
+            // Stand up the XDND foundation on its own X11 connection. A failure
+            // here is non-fatal: X11<->Wayland DnD is just unavailable.
+            match xdnd::XdndState::create(display_number, &loop_handle) {
+                Ok(xdnd) => {
+                    state.xdnd = Some(xdnd);
+                }
+                Err(err) => {
+                    println!("[waylandcraft] XDND init failed, X11 DnD disabled: {}", err)
+                }
+            }
+        }
+        XWaylandEvent::Error => {
+            println!("[waylandcraft] Xwayland crashed on startup");
+        }
+    });
+    if let Err(err) = ret {
+        println!("[waylandcraft] failed to insert Xwayland source: {}", err);
+    }
 }
 
 impl<'a> WaylandCraft<'a> {
@@ -347,3 +512,4 @@ delegate_xdg_shell!(WLCState);
 delegate_viewporter!(WLCState);
 delegate_single_pixel_buffer!(WLCState);
 delegate_dmabuf!(WLCState);
+delegate_xwayland_shell!(WLCState);
