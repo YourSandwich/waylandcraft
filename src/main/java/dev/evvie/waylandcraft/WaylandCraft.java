@@ -5,6 +5,8 @@ import java.util.HashSet;
 import java.util.stream.Stream;
 
 import org.jetbrains.annotations.Nullable;
+import org.joml.Matrix4f;
+import org.joml.Vector4f;
 import org.lwjgl.glfw.GLFW;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -112,6 +114,19 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 	private WindowResize handResize = null;
 	
 	public @Nullable CursorShape cursorShape = null;
+
+	// True for the frame when the pointer is over a Wayland surface (hovering,
+	// captured, or under a grab). Gates client cursor drawing: a client cursor
+	// surface set while a window was focused must not keep drawing once the
+	// pointer leaves the window. Recomputed every processPointerMotion.
+	public boolean pointerOnSurface = false;
+
+	// Camera projection, view rotation and world position captured each frame
+	// at renderWorld. Used by surfaceToScreen to project the Alt+G on-window
+	// cursor to a screen pixel, since the GUI render has no LevelRenderContext.
+	private final Matrix4f cameraProjection = new Matrix4f();
+	private final Matrix4f cameraViewRotation = new Matrix4f();
+	private Vec3 cameraPos = Vec3.ZERO;
 	
 	@Override
 	public void onInitialize() {
@@ -156,8 +171,11 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 	
 	public void renderWorld(LevelRenderContext ctx) {
 		if(bridge == null) return;
-		
+
 		ShaderWindowPass.captureCamera(ctx.levelState().cameraRenderState.projectionMatrix, ctx.levelState().cameraRenderState.viewRotationMatrix);
+		cameraProjection.set(ctx.levelState().cameraRenderState.projectionMatrix);
+		cameraViewRotation.set(ctx.levelState().cameraRenderState.viewRotationMatrix);
+		cameraPos = ctx.levelState().cameraRenderState.pos;
 		displays.forEach((d) -> d.render(ctx));
 	}
 	
@@ -263,10 +281,47 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 	
 	public void disableKeyboardCapture() {
 		if(keyboardCaptureMode == KeyboardCaptureMode.NONE) return;
-		
+
 		keyboardCaptureMode = KeyboardCaptureMode.NONE;
 		bridge.deactivateKeyboard();
 		disablePointerCapture();
+	}
+
+	/* Enter Alt+G desktop capture: lock the camera, capture the keyboard, and
+	 * route the mouse to an absolute cursor on the currently focused window.
+	 * The pointer enters at the window center; mouse motion advances it from
+	 * there (see onMouseTurn). Returns silently if nothing is focused.
+	 */
+	public void enableDesktopCapture() {
+		if(keyboardCaptureMode != KeyboardCaptureMode.NONE) return;
+
+		WLCToplevel target = bridge.getMostRecentFocus();
+		if(target == null && hoveredDisplay != null) {
+			target = rootToplevel(hoveredDisplay.target.window);
+		}
+		if(target == null || target.getSurfaceTree() == null || !target.getSurfaceTree().isAlive()) return;
+
+		WLCSurface surface = target.getSurfaceTree();
+		double x = surface.width() / 2.0;
+		double y = surface.height() / 2.0;
+
+		bridge.focusSurface(target);
+		bridge.sendMotionRefocus(surface, x, y);
+
+		keyboardCaptureMode = KeyboardCaptureMode.DESKTOP;
+		bridge.activateKeyboard();
+		pointerCapture = new PointerCapture(surface, x, y, true);
+		hoveredDisplay = null;
+		overridePickBlock = true;
+	}
+
+	// The root toplevel a window belongs to: a popup resolves to its owning
+	// toplevel, a toplevel is returned as-is, anything else yields null.
+	private static @Nullable WLCToplevel rootToplevel(WLCAbstractWindow window) {
+		while(window instanceof WLCPopup) {
+			window = ((WLCPopup) window).getParent();
+		}
+		return window instanceof WLCToplevel ? (WLCToplevel) window : null;
 	}
 	
 	public void onClientTick(Minecraft minecraft) {
@@ -455,22 +510,65 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 		bridge.unlockPointer();
 		pointerCapture = null;
 	}
+
+	/* Project the Alt+G desktop cursor to a GUI-space pixel. The captured
+	 * surface-local position is mapped to its window's in-world plane, then
+	 * through the frame's camera matrices to the screen. Returns null when no
+	 * desktop capture is active, the captured window has no display, or the
+	 * point projects behind the camera.
+	 */
+	public @Nullable Vec3 desktopCursorScreenPos() {
+		if(pointerCapture == null || !pointerCapture.desktop) return null;
+
+		WindowDisplay display = displayForSurface(pointerCapture.surface);
+		if(display == null) return null;
+
+		// Surface-local position offset by the surface's place in the window
+		// gives the toplevel-local pixel the display origin is measured from.
+		double localX = pointerCapture.surface.xSubpos + pointerCapture.x;
+		double localY = pointerCapture.surface.ySubpos + pointerCapture.y;
+		Vec3 world = display.localToWorld(localX, localY, 0).subtract(cameraPos);
+
+		Vector4f clip = new Matrix4f(cameraProjection).mul(cameraViewRotation)
+				.transform(new Vector4f((float) world.x, (float) world.y, (float) world.z, 1.0f));
+		if(clip.w <= 0.0f) return null;
+
+		float ndcX = clip.x / clip.w;
+		float ndcY = clip.y / clip.w;
+		int guiWidth = Minecraft.getInstance().getWindow().getGuiScaledWidth();
+		int guiHeight = Minecraft.getInstance().getWindow().getGuiScaledHeight();
+		return new Vec3((ndcX * 0.5 + 0.5) * guiWidth, (1.0 - (ndcY * 0.5 + 0.5)) * guiHeight, 0);
+	}
+
+	// The display whose window owns the given surface, or null if none does.
+	private @Nullable WindowDisplay displayForSurface(WLCSurface surface) {
+		for(WindowDisplay display : displays) {
+			for(WLCSurface s = display.window.getSurfaceTree(); s != null; s = s.getNextChild()) {
+				if(s == surface) return display;
+			}
+		}
+		return null;
+	}
 	
 	private void processPointerMotion(Camera camera) {
 		this.cursorShape = null;
-		
+		this.pointerOnSurface = false;
+
 		if(pointerCapture != null) {
 			if(!pointerCapture.surface.isAlive()) {
 				pointerCapture = null;
 				return;
 			}
-			
+
 			this.cursorShape = bridge.getCursorShape();
-			
-			if(!bridge.maybeLockPointer(pointerCapture.surface)) {
+			this.pointerOnSurface = true;
+
+			// Desktop capture delivers absolute motion, so it must not lock the
+			// pointer - a lock would suppress the position the cursor needs.
+			if(!pointerCapture.desktop && !bridge.maybeLockPointer(pointerCapture.surface)) {
 				disablePointerCapture();
 			}
-			
+
 			return;
 		}
 		
@@ -519,7 +617,8 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 		if(pointerGrabs.isGrabActive()) {
 			this.overridePickBlock = true;
 			this.cursorShape = bridge.getCursorShape();
-			
+			this.pointerOnSurface = true;
+
 			pointerGrabs.moveWorld(pos, look, up);
 			if(finalHitResult != null) {
 				pointerGrabs.hover(finalHitResult.target.window, finalHitResult.surface, finalHitResult.surfaceLocalRelative.x, finalHitResult.surfaceLocalRelative.y);
@@ -544,10 +643,11 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 			Vec3 rel = hoveredDisplay.surfaceLocalRelative;
 			
 			this.cursorShape = bridge.getCursorShape();
+			this.pointerOnSurface = true;
 			bridge.sendMotionRefocus(surface, rel.x, rel.y);
 			
 			if(keyboardCaptureMode != KeyboardCaptureMode.NONE && bridge.maybeLockPointer(surface)) {
-				pointerCapture = new PointerCapture(surface, rel.x, rel.y);
+				pointerCapture = new PointerCapture(surface, rel.x, rel.y, false);
 			}
 		}
 		else {
@@ -631,13 +731,26 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 			return pointerGrabs.isExclusiveGrabActive() && pointerGrabs.onMouseTurn(dx, dy);
 		}
 
+		// Desktop capture (Alt+G): the mouse drives an absolute cursor over the
+		// captured window. Advance the position, clamp to the surface, and
+		// deliver it as motion. The camera stays locked - the turn is consumed
+		// without moving the player view.
+		if(pointerCapture.desktop) {
+			double maxX = Math.max(1.0, pointerCapture.surface.width());
+			double maxY = Math.max(1.0, pointerCapture.surface.height());
+			pointerCapture.x = Math.clamp(pointerCapture.x + dx, 0.0, maxX);
+			pointerCapture.y = Math.clamp(pointerCapture.y + dy, 0.0, maxY);
+			bridge.sendMotion(pointerCapture.x, pointerCapture.y);
+			return true;
+		}
+
 		bridge.sendRelativeMotion(dx, dy);
-		
+
 		// Workaround for xwayland-satellite issues, usually shouldn't be done
 		// as it is technically against protocol and so might cause issues but
 		// otherwise relative motion seems to not work.
 //		bridge.sendMotion(pointerCapture.x += dx, pointerCapture.y += dy);
-		
+
 		return true;
 	}
 	
@@ -645,6 +758,14 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 	 * Returns true when the mouse scroll action has been consumed
 	 */
 	public boolean onScroll(long windowHandle, double scrollX, double scrollY) {
+		// Desktop capture routes scroll to the captured window as axis events.
+		// The -10 factor inverts GLFW's Wayland scroll scaling, as below.
+		if(pointerCapture != null && pointerCapture.desktop) {
+			bridge.sendScroll(0, -scrollY * 10);
+			bridge.sendScroll(1, -scrollX * 10);
+			return true;
+		}
+
 		if(playerUsingWindowItem) {
 			WLCToplevel toplevel = WindowItem.getToplevel(Minecraft.getInstance().player.getUseItem());
 			if(toplevel != null) {
@@ -687,7 +808,7 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 	public boolean onKeyPress(long windowHandle, int key, int scancode, int action, int modifiers) {
 		if(key == GLFW.GLFW_KEY_Q && modifiers == GLFW.GLFW_MOD_ALT) {
 			if(action == 0) return true;
-			
+
 			if(keyboardCaptureMode != KeyboardCaptureMode.HARD_CAPTURE) {
 				enableKeyboardCapture(true);
 			}
@@ -696,7 +817,20 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 			}
 			return true;
 		}
-		
+
+		if(key == GLFW.GLFW_KEY_G && modifiers == GLFW.GLFW_MOD_ALT) {
+			// Toggle only on the initial press, as with Alt+Q above.
+			if(action != GLFW.GLFW_PRESS) return true;
+
+			if(keyboardCaptureMode != KeyboardCaptureMode.DESKTOP) {
+				enableDesktopCapture();
+			}
+			else {
+				disableKeyboardCapture();
+			}
+			return true;
+		}
+
 		if(keyboardCaptureMode == KeyboardCaptureMode.NONE) return false;
 		
 		if(keyboardCaptureMode == KeyboardCaptureMode.CAPTURE && key == GLFW.GLFW_KEY_ESCAPE) {
@@ -752,27 +886,36 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 	}
 	
 	public static enum KeyboardCaptureMode {
-		
-		NONE, CAPTURE, HARD_CAPTURE;
-		
+
+		// CAPTURE: keyboard-only (G). HARD_CAPTURE: relative mouse for 3D games
+		// (Alt+Q). DESKTOP: camera locked, the captured mouse drives an absolute
+		// cursor on the focused window (Alt+G).
+		NONE, CAPTURE, HARD_CAPTURE, DESKTOP;
+
 	}
-	
+
 	public static class PointerCapture {
-		
+
 		public final WLCSurface surface;
-		
-		// Pointer capture entry surface-local coordinates
+
+		// Pointer capture entry surface-local coordinates. In DESKTOP capture
+		// these are advanced by mouse motion and clamped to the surface size.
 		public double x;
 		public double y;
-		
+
+		// True when this capture drives an absolute on-window cursor (Alt+G)
+		// rather than relative motion. Set once at creation.
+		public final boolean desktop;
+
 		public HashSet<Integer> pressedButtons = new HashSet<Integer>();
-		
-		public PointerCapture(WLCSurface surface, double x, double y) {
+
+		public PointerCapture(WLCSurface surface, double x, double y, boolean desktop) {
 			this.surface = surface;
 			this.x = x;
 			this.y = y;
+			this.desktop = desktop;
 		}
-		
+
 	}
 	
 }

@@ -42,7 +42,12 @@ public class WaylandCraftBridge {
 	private ArrayList<WindowFramebuffer> framebuffers = new ArrayList<WindowFramebuffer>();
 	
 	public IconSurface dndIcon = null;
-	
+
+	// Client-provided cursor surface (wl_pointer.set_cursor with an image), or
+	// null when the cursor is a named cursor-shape, hidden, or unset. Tracked
+	// and rendered like dndIcon - a floating surface following the pointer.
+	public IconSurface cursorIcon = null;
+
 	private LinkedList<WLCToplevel> focusOrder = new LinkedList<WLCToplevel>();
 	
 	private ArrayList<WLCToplevel> newToplevels = new ArrayList<WLCToplevel>();
@@ -366,14 +371,27 @@ public class WaylandCraftBridge {
 			WLCSurface dndIconSurface = getOrCreateSurface(dndIconHandle);
 			if(dndIcon != null && dndIcon.surface != dndIconSurface) dndIcon = null;
 			if(dndIcon == null) dndIcon = new IconSurface(dndIconSurface);
-			
+
 			updateSurfaceData(instance, dndIcon.surface);
 			dndIcon.surface.visited = true;
 		}
 		else {
 			dndIcon = null;
 		}
-		
+
+		long cursorIconHandle = cursorSurface(instance);
+		if(cursorIconHandle != 0) {
+			WLCSurface cursorIconSurface = getOrCreateSurface(cursorIconHandle);
+			if(cursorIcon != null && cursorIcon.surface != cursorIconSurface) cursorIcon = null;
+			if(cursorIcon == null) cursorIcon = new IconSurface(cursorIconSurface);
+
+			updateSurfaceData(instance, cursorIcon.surface);
+			cursorIcon.surface.visited = true;
+		}
+		else {
+			cursorIcon = null;
+		}
+
 		// All surface trees have now been walked. Now delete all unvisited surfaces
 		deleteUnvisitedSurfaces();
 		profiler.pop();
@@ -454,6 +472,16 @@ public class WaylandCraftBridge {
 			dndIcon.framebuffer.render();
 		}
 
+		// Render client cursor surface
+		if(cursorIcon != null) {
+			if(cursorIcon.framebuffer == null) {
+				cursorIcon.framebuffer = new WindowFramebuffer(cursorIcon.surface);
+				framebuffers.add(cursorIcon.framebuffer);
+			}
+			cursorIcon.framebuffer.setSurfaceTree(cursorIcon.surface);
+			cursorIcon.framebuffer.render();
+		}
+
 		// Cleanup framebuffers no longer owned by a live window or the dnd icon.
 		// Keyed on the owning window, not surfaceTree liveness: a tracked X11
 		// window keeps its framebuffer across an unmap and loses it only when
@@ -463,6 +491,7 @@ public class WaylandCraftBridge {
 			if(window.framebuffer != null) usedFramebuffers.add(window.framebuffer);
 		}
 		if(dndIcon != null && dndIcon.framebuffer != null) usedFramebuffers.add(dndIcon.framebuffer);
+		if(cursorIcon != null && cursorIcon.framebuffer != null) usedFramebuffers.add(cursorIcon.framebuffer);
 		for(WindowFramebuffer framebuffer : framebuffers) {
 			if(!usedFramebuffers.contains(framebuffer)) framebuffer.destroy();
 		}
@@ -561,7 +590,17 @@ public class WaylandCraftBridge {
 	public CursorShape getCursorShape() {
 		return CursorShape.fromId(cursorShape(instance));
 	}
-	
+
+	// Hotspot of the client cursor surface, in cursor-buffer pixels. Only
+	// meaningful while cursorIcon is non-null.
+	public int getCursorHotspotX() {
+		return cursorHotspotX(instance);
+	}
+
+	public int getCursorHotspotY() {
+		return cursorHotspotY(instance);
+	}
+
 	public void focusSurface(@Nullable WLCToplevel toplevel) {
 		long handle = 0;
 		if(toplevel != null) {
@@ -826,6 +865,12 @@ public class WaylandCraftBridge {
 	
 	// Get active cursor image
 	private static native int cursorShape(long instance);
+
+	// Handle of the client-provided cursor surface, or 0 if none is set
+	private static native long cursorSurface(long instance);
+
+	private static native int cursorHotspotX(long instance);
+	private static native int cursorHotspotY(long instance);
 	
 	// Set keyboard focus to a wayland surface. The handle may be 0 to unfocus any surfaces
 	private static native void keyboardFocus(long instance, long surfaceHandle);

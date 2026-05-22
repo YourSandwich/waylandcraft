@@ -10,8 +10,10 @@ import com.llamalad7.mixinextras.sugar.ref.LocalRef;
 import com.mojang.blaze3d.vertex.PoseStack;
 
 import dev.evvie.waylandcraft.WaylandCraft;
+import dev.evvie.waylandcraft.WaylandCraft.KeyboardCaptureMode;
 import dev.evvie.waylandcraft.item.WindowItem;
 import net.minecraft.client.player.AbstractClientPlayer;
+import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.ItemInHandRenderer;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.world.InteractionHand;
@@ -20,7 +22,14 @@ import net.minecraft.world.item.ItemStack;
 
 @Mixin(ItemInHandRenderer.class)
 public abstract class ItemInHandRendererMixin {
-	
+
+	// Alt+G desktop capture hides the first-person hand: the player is driving a
+	// window cursor, not holding an item, so skip the whole hand render.
+	@Inject(method = "renderHandsWithItems", at = @At("HEAD"), cancellable = true)
+	public void renderHandsWithItems(float frameInterp, PoseStack poseStack, SubmitNodeCollector collector, LocalPlayer player, int light, CallbackInfo info) {
+		if(WaylandCraft.instance != null && WaylandCraft.instance.keyboardCaptureMode == KeyboardCaptureMode.DESKTOP) info.cancel();
+	}
+
 	@Inject(method = "renderArmWithItem", at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/vertex/PoseStack;pushPose()V"), cancellable = true)
 	public void renderArmWithItem(
 		AbstractClientPlayer player,

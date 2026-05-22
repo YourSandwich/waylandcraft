@@ -53,6 +53,13 @@ pub struct WLCSeatState {
     pub xkb_context: xkb::Context,
     pub xkb_state: xkb::State,
     pub cursor_shape: Option<u32>,
+    // Client-provided cursor surface and its hotspot, set via wl_pointer
+    // .set_cursor with a non-null surface. Mutually exclusive with cursor_shape:
+    // whichever request ran last wins. None means no surface cursor is set.
+    pub cursor_surface: Option<WlSurface>,
+    pub cursor_hotspot: (i32, i32),
+    // A null surface in set_cursor means the client wants the cursor hidden.
+    pub cursor_hidden: bool,
 }
 
 pub struct WLCPointerData {
@@ -175,6 +182,9 @@ impl WLCSeatState {
             xkb_context,
             xkb_state,
             cursor_shape: None,
+            cursor_surface: None,
+            cursor_hotspot: (0, 0),
+            cursor_hidden: false,
         }
     }
 
@@ -182,7 +192,9 @@ impl WLCSeatState {
         disp.create_global::<WLCState, WlSeat, ()>(10, ());
         disp.create_global::<WLCState, ZwpRelativePointerManagerV1, ()>(1, ());
         disp.create_global::<WLCState, ZwpPointerConstraintsV1, ()>(1, ());
-        disp.create_global::<WLCState, WpCursorShapeManagerV1, ()>(2, ());
+        // wp_cursor_shape_v1 deliberately not advertised: it only carries shape
+        // names. Without it clients draw their real themed cursor into a
+        // wl_surface via wl_pointer.set_cursor, which is what WaylandCraft renders.
     }
 
     fn pointer_frame(&self, pointer: &WlPointer) {
@@ -673,7 +685,10 @@ impl Dispatch<WlPointer, WLCPointer> for WLCState {
     ) {
         match request {
             wl_pointer::Request::SetCursor {
-                serial, surface, ..
+                serial,
+                surface,
+                hotspot_x,
+                hotspot_y,
             } => {
                 let last_enter =
                     with_pointer_data(pointer, |data| data.last_enter);
@@ -684,15 +699,24 @@ impl Dispatch<WlPointer, WLCPointer> for WLCState {
                     return;
                 }
 
-                if surface.is_none() {
-                    // Attaching an empty surface to hide cursor
-                    // Zero value (not defined in protocol) means hidden here.
-                    state.seat.cursor_shape = Some(0);
-                } else {
-                    // When an image is attached instead of a shape, reset to
-                    // default because this compositor doesn't implement normal
-                    // surface-based cursors, only cursor-shape.
-                    state.seat.cursor_shape = None;
+                match surface {
+                    // A client-provided cursor image. Track the surface and its
+                    // hotspot; the Java side imports the surface buffer and
+                    // draws it at the pointer. cursor_shape is cleared so the
+                    // surface cursor wins over any earlier cursor-shape.
+                    Some(surface) => {
+                        state.seat.cursor_surface = Some(surface);
+                        state.seat.cursor_hotspot = (hotspot_x, hotspot_y);
+                        state.seat.cursor_hidden = false;
+                        state.seat.cursor_shape = None;
+                    }
+                    // A null surface means the client wants no cursor drawn.
+                    None => {
+                        state.seat.cursor_surface = None;
+                        state.seat.cursor_hotspot = (0, 0);
+                        state.seat.cursor_hidden = true;
+                        state.seat.cursor_shape = None;
+                    }
                 }
             }
             wl_pointer::Request::Release => {}
@@ -1040,6 +1064,11 @@ impl Dispatch<WpCursorShapeDeviceV1, WLCCursorShapeDevice> for WLCState {
                     return;
                 }
 
+                // Switching to a named shape clears any surface cursor and the
+                // hidden state, so the cursor-shape path takes over again.
+                state.seat.cursor_surface = None;
+                state.seat.cursor_hotspot = (0, 0);
+                state.seat.cursor_hidden = false;
                 state.seat.cursor_shape = Some(shape.into());
             }
             _ => unreachable!(),

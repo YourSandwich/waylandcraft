@@ -1343,10 +1343,61 @@ pub extern "system" fn cursorShape<'l>(
 ) -> jint {
     let instance = jptr_to_instance(ptr);
 
+    // A client hid the cursor with a null set_cursor surface: report the HIDE
+    // shape (id 0) so the Java side draws nothing.
+    if instance.state.seat.cursor_hidden {
+        return 0;
+    }
+
     match instance.state.seat.cursor_shape {
         Some(shape) => shape as jint,
         None => -1,
     }
+}
+
+// Handle of the client-provided cursor surface, or 0 if no surface cursor is
+// set or its surface died. A dead surface clears the seat state so it is not
+// retried. The handle indexes the same surfaces table as window surfaces.
+#[unsafe(export_name = "Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_\
+    cursorSurface")]
+pub extern "system" fn cursorSurface<'l>(
+    _env: JNIEnv<'l>,
+    _class: JClass<'l>,
+    ptr: jlong,
+) -> jlong {
+    let instance = jptr_to_instance(ptr);
+    let surface = match instance.state.seat.cursor_surface.clone() {
+        Some(surface) if surface.is_alive() => surface,
+        Some(_) => {
+            instance.state.seat.cursor_surface = None;
+            return 0;
+        }
+        None => return 0,
+    };
+
+    insert_get_handle(&mut instance.bridge.surfaces, &surface)
+}
+
+#[unsafe(export_name = "Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_\
+    cursorHotspotX")]
+pub extern "system" fn cursorHotspotX<'l>(
+    _env: JNIEnv<'l>,
+    _class: JClass<'l>,
+    ptr: jlong,
+) -> jint {
+    let instance = jptr_to_instance(ptr);
+    instance.state.seat.cursor_hotspot.0
+}
+
+#[unsafe(export_name = "Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_\
+    cursorHotspotY")]
+pub extern "system" fn cursorHotspotY<'l>(
+    _env: JNIEnv<'l>,
+    _class: JClass<'l>,
+    ptr: jlong,
+) -> jint {
+    let instance = jptr_to_instance(ptr);
+    instance.state.seat.cursor_hotspot.1
 }
 
 #[unsafe(export_name = "Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_\
