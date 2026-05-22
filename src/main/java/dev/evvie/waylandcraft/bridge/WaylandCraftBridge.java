@@ -44,6 +44,8 @@ public class WaylandCraftBridge {
 	private @Nullable Integer lastMoveRequestSerial = null;
 	private @Nullable ResizeRequest lastResizeRequest = null;
 
+	private boolean launchedAppsCleaned = false;
+
 	// Shared handle-0 surface for windows with no backing surface (an X11 window
 	// before the xwayland-shell association and while unmapped). It is never put
 	// in the surfaces list - it has no native pointer to free - and is inert:
@@ -91,7 +93,17 @@ public class WaylandCraftBridge {
 		}
 		
 		long handle = init(GLFW.Functions.GetProcAddress, eglDisplay);
-		return new WaylandCraftBridge(handle);
+		WaylandCraftBridge bridge = new WaylandCraftBridge(handle);
+		// Kill every Steam/Proton/Xwayland app launched into this compositor
+		// when the JVM exits, so quitting Minecraft does not orphan them.
+		Runtime.getRuntime().addShutdownHook(new Thread(bridge::cleanupLaunchedApps, "WaylandCraft app cleanup"));
+		return bridge;
+	}
+
+	public synchronized void cleanupLaunchedApps() {
+		if(launchedAppsCleaned || instance == 0) return;
+		launchedAppsCleaned = true;
+		cleanupLaunchedApps(instance);
 	}
 	
 	protected WLCToplevel getOrCreateToplevel(long handle) {
@@ -683,6 +695,8 @@ public class WaylandCraftBridge {
 	public static record ResizeRequest(int serial, int edges) {}
 	
 	private static native long init(long glfwGetProcAddress, long eglDisplay);
+	// SIGTERM then SIGKILL every app process launched into this compositor
+	private static native void cleanupLaunchedApps(long instance);
 	private static native void update(long instance);
 	private static native String socket(long instance);
 	private static native void sendFrame(long handle);

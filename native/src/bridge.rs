@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 use crate::egl::{EGLDisplay, EGLHelper};
+use crate::process::cleanup_display_processes;
 use crate::svg::render_svg;
 use crate::utils::get_time;
 use crate::xdg_spec::RawDesktopEntry;
@@ -166,6 +167,23 @@ pub extern "system" fn update<'l>(
 ) {
     let instance = jptr_to_instance(ptr);
     instance.update();
+}
+
+#[unsafe(export_name = "Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_\
+    cleanupLaunchedApps")]
+pub extern "system" fn cleanupLaunchedApps<'l>(
+    _env: JNIEnv<'l>,
+    _class: JClass<'l>,
+    ptr: jlong,
+) {
+    let instance = jptr_to_instance(ptr);
+    let killed = cleanup_display_processes(
+        &instance.state.socket,
+        instance.state.xdisplay,
+    );
+    if killed > 0 {
+        println!("[waylandcraft] cleaned up {killed} launched app(s)");
+    }
 }
 
 #[unsafe(export_name = "Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_\
