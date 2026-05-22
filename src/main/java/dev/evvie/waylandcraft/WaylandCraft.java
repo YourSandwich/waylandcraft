@@ -26,6 +26,8 @@ import dev.evvie.waylandcraft.grabs.MoveGrab;
 import dev.evvie.waylandcraft.grabs.PointerGrabMap;
 import dev.evvie.waylandcraft.grabs.PointerGrabMap.ImplicitGrab;
 import dev.evvie.waylandcraft.grabs.ResizeGrab;
+import dev.evvie.waylandcraft.grabs.WindowGrab;
+import dev.evvie.waylandcraft.grabs.WindowResize;
 import dev.evvie.waylandcraft.grabs.X11DNDGrab;
 import dev.evvie.waylandcraft.gui.AppLauncherScreen;
 import dev.evvie.waylandcraft.gui.WaylandHudRenderer;
@@ -103,6 +105,10 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 	
 	private boolean playerUsingWindowItem = false;
 	private boolean playerWasUsingWindowItem = false;
+	
+	// Control+drag resize for the window being placed from the hand, or null
+	// when no place-from-hand resize is bound to a toplevel
+	private WindowResize handResize = null;
 	
 	public @Nullable CursorShape cursorShape = null;
 	
@@ -195,17 +201,27 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 		processPointerMotion(camera);
 		
 		if(Minecraft.getInstance().player == null || !Minecraft.getInstance().player.isUsingItem()) playerUsingWindowItem = false;
+		WLCToplevel handToplevel = null;
 		if(playerUsingWindowItem) {
 			ItemStack item = Minecraft.getInstance().player.getUseItem();
 			if(item.is(WindowItem.WINDOW)) {
 				WLCToplevel toplevel = WindowItem.getToplevel(item);
 				
 				if(toplevel != null) {
+					handToplevel = toplevel;
 					WindowDisplay display = getOrCreateDisplay(toplevel);
 					if(!playerWasUsingWindowItem) {
 						display.anchorDistance = 2.0;
+						handResize = new WindowResize(toplevel);
 					}
-					display.anchorToCamera(camera);
+					
+					// A Control+drag resize holds the window still so the view
+					// sweep can size it, mirroring WindowGrab.moveWorld; the
+					// window follows the camera again once Control is released.
+					if(!handResize.isResizing() || !WaylandCraftUtils.isControlHeld()) {
+						handResize.commit();
+						display.anchorToCamera(camera);
+					}
 					WaylandCraft.instance.bridge.focusSurface(toplevel);
 				}
 			}
@@ -213,11 +229,26 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 		}
 		playerWasUsingWindowItem = playerUsingWindowItem;
 		
+		// Finalize and drop the resize helper once placement no longer drives a window
+		if(handResize != null && handToplevel == null) {
+			handResize.commit();
+			handResize = null;
+		}
+		
 		updateOutputSize(inWMScreen);
 	}
 	
 	public void startUsingWindowItem() {
 		playerUsingWindowItem = true;
+	}
+
+	/* True while the player is placing a window in the world: either driving a
+	 * WindowGrab from the window manager screen, or holding a window item from
+	 * the hand. Placement uses Shift+scroll for lateral movement, so sneak must
+	 * be suppressed while this holds (see LocalPlayerMixin).
+	 */
+	public boolean isPlacingWindow() {
+		return pointerGrabs.getExclusiveGrab() instanceof WindowGrab || playerUsingWindowItem;
 	}
 	
 	public void enableKeyboardCapture(boolean hardCapture) {
@@ -589,8 +620,15 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 	 * Returns true when the mouse move has been consumed
 	 */
 	public boolean onMouseTurn(double dx, double dy) {
-		if(pointerCapture == null) return false;
-		
+		if(pointerCapture == null) {
+			// While placing a window, holding Control turns the view drag into a resize
+			if(playerUsingWindowItem && handResize != null && WaylandCraftUtils.isControlHeld()) {
+				handResize.onMouseTurn(dx, dy);
+				return true;
+			}
+			return pointerGrabs.isExclusiveGrabActive() && pointerGrabs.onMouseTurn(dx, dy);
+		}
+
 		bridge.sendRelativeMotion(dx, dy);
 		
 		// Workaround for xwayland-satellite issues, usually shouldn't be done
@@ -610,7 +648,9 @@ public class WaylandCraft implements ModInitializer, ClientModInitializer {
 			if(toplevel != null) {
 				WindowDisplay display = getDisplay(toplevel);
 				if(display != null) {
-					display.adjustAnchorDistance(scrollY);
+					if(WaylandCraftUtils.isAltHeld()) display.adjustAnchorHeight(scrollY);
+					else if(WaylandCraftUtils.isShiftHeld()) display.adjustAnchorLateral(scrollY);
+					else display.adjustAnchorDistance(scrollY);
 					return true;
 				}
 			}

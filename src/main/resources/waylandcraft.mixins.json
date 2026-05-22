@@ -6,6 +6,7 @@
 		"MouseHandlerMixin",
 		"GlBackendMixin",
 		"KeyboardHandlerMixin",
+		"LocalPlayerMixin",
 		"IMouseHandlerMixin",
 		"ItemInHandRendererMixin",
 		"IItemInHandRendererMixin",

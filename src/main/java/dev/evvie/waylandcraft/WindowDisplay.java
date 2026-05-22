@@ -30,6 +30,8 @@ public class WindowDisplay {
 	private Vec3 down = new Vec3(0, -1, 0);
 
 	public double anchorDistance = 2.0;
+	public double anchorHeight = 0.0;
+	public double anchorLateral = 0.0;
 
 	private int width;
 	private int height;
@@ -189,9 +191,18 @@ public class WindowDisplay {
 	public void adjustAnchorDistance(double delta) {
 		this.anchorDistance = Math.clamp(this.anchorDistance + delta * 0.1d, 0.5d, 20d);
 	}
-	
+
+	public void adjustAnchorHeight(double delta) {
+		this.anchorHeight = Math.clamp(this.anchorHeight + delta * 0.1d, -20d, 20d);
+	}
+
+	public void adjustAnchorLateral(double delta) {
+		this.anchorLateral = Math.clamp(this.anchorLateral + delta * 0.1d, -20d, 20d);
+	}
+
 	public void anchorToPosView(Vec3 pos, Vec3 look, Vec3 up) {
-		this.pivot = pos.add(look.scale(this.anchorDistance));
+		Vec3 right = look.cross(up);
+		this.pivot = pos.add(look.scale(this.anchorDistance)).add(0.0d, this.anchorHeight, 0.0d).add(right.scale(this.anchorLateral));
 		this.rotate(look.reverse(), up.reverse());
 	}
 	

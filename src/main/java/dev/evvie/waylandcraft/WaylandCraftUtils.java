@@ -2,6 +2,7 @@ package dev.evvie.waylandcraft;
 
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
+import org.lwjgl.glfw.GLFW;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.util.Mth;
@@ -43,5 +44,23 @@ public class WaylandCraftUtils {
 		Vec3 up = new Vec3(new Vector3f(0, 1, 0).rotate(rotation));
 		return up;
 	}
-	
+
+	public static boolean isAltHeld() {
+		long handle = Minecraft.getInstance().getWindow().handle();
+		return GLFW.glfwGetKey(handle, GLFW.GLFW_KEY_LEFT_ALT) == GLFW.GLFW_PRESS
+				|| GLFW.glfwGetKey(handle, GLFW.GLFW_KEY_RIGHT_ALT) == GLFW.GLFW_PRESS;
+	}
+
+	public static boolean isControlHeld() {
+		long handle = Minecraft.getInstance().getWindow().handle();
+		return GLFW.glfwGetKey(handle, GLFW.GLFW_KEY_LEFT_CONTROL) == GLFW.GLFW_PRESS
+				|| GLFW.glfwGetKey(handle, GLFW.GLFW_KEY_RIGHT_CONTROL) == GLFW.GLFW_PRESS;
+	}
+
+	public static boolean isShiftHeld() {
+		long handle = Minecraft.getInstance().getWindow().handle();
+		return GLFW.glfwGetKey(handle, GLFW.GLFW_KEY_LEFT_SHIFT) == GLFW.GLFW_PRESS
+				|| GLFW.glfwGetKey(handle, GLFW.GLFW_KEY_RIGHT_SHIFT) == GLFW.GLFW_PRESS;
+	}
+
 }

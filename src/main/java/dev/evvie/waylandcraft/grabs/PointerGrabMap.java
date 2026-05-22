@@ -124,6 +124,17 @@ public class PointerGrabMap {
 			}
 		}
 	}
+
+	public boolean onMouseTurn(double dx, double dy) {
+		if (exclusiveGrab != null) {
+			try {
+				return exclusiveGrab.onMouseTurn(dx, dy);
+			} catch (GrabDroppedException e) {
+				exclusiveGrab = null;
+			}
+		}
+		return false;
+	}
 	
 	public void release(int button) {
 		if(exclusiveGrab != null && exclusiveGrab.button == button) {

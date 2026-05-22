@@ -38,5 +38,11 @@ public abstract class PointerGrab {
 
 	// Called every time the player scrolls while grabbing a window
 	public void onScroll(double scrollX, double scrollY) throws GrabDroppedException {}
-	
+
+	// Called every time the player turns their view while grabbing a window.
+	// Returns true when the turn was consumed and should not move the player.
+	public boolean onMouseTurn(double dx, double dy) throws GrabDroppedException {
+		return false;
+	}
+
 }
