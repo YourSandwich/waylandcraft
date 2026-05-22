@@ -21,6 +21,7 @@ import dev.evvie.waylandcraft.CursorShape;
 import dev.evvie.waylandcraft.WaylandCraft;
 import dev.evvie.waylandcraft.bridge.WLCAbstractWindow.SurfaceGeometry;
 import dev.evvie.waylandcraft.desktop.RawDesktopEntry;
+import dev.evvie.waylandcraft.render.BufferTexture;
 import dev.evvie.waylandcraft.render.BufferTexture.DmabufTexture;
 import dev.evvie.waylandcraft.render.ShaderWindowPass;
 import dev.evvie.waylandcraft.render.WindowFramebuffer;
@@ -34,6 +35,10 @@ public class WaylandCraftBridge {
 	private ArrayList<WLCPopup> popups = new ArrayList<WLCPopup>();
 	private ArrayList<WLCSurface> surfaces = new ArrayList<WLCSurface>();
 	private ArrayList<DmabufTexture> dmabufs = new ArrayList<DmabufTexture>();
+	// Dmabufs whose native WeakDmabuf is gone but a live WLCSurface still uses
+	// the texture. Freed later, once no surface references them - see
+	// deleteNonExistingDmabufs.
+	private ArrayList<DmabufTexture> retiredDmabufs = new ArrayList<DmabufTexture>();
 	private ArrayList<WindowFramebuffer> framebuffers = new ArrayList<WindowFramebuffer>();
 	
 	public IconSurface dndIcon = null;
@@ -161,6 +166,17 @@ public class WaylandCraftBridge {
 	protected void addDmabuf(DmabufTexture dmabuf) {
 		dmabufs.add(dmabuf);
 	}
+
+	// Count how many surfaces currently hold this buffer as their texture.
+	// getDmabuf hands the same DmabufTexture to every surface with that handle,
+	// so a dmabuf can be live on several surfaces at once.
+	private int countBufferReferences(BufferTexture buffer) {
+		int refs = 0;
+		for(WLCSurface surface : this.surfaces) {
+			if(surface.getBuffer() == buffer) refs++;
+		}
+		return refs;
+	}
 	
 	private void deleteNonExistingToplevels(long[] remainingHandles) {
 		ArrayList<WLCToplevel> toplevels_new = new ArrayList<WLCToplevel>();
@@ -194,11 +210,25 @@ public class WaylandCraftBridge {
 			if(ArrayUtils.contains(remainingHandles, dmabuf.handle)) {
 				dmabufs_new.add(dmabuf);
 			}
+			// free() destroys the shared EGL image and GL texture. A surface
+			// other than the one that uploaded this dmabuf may still hold it,
+			// so defer the free until no surface references the texture -
+			// otherwise that surface renders a freed texture.
+			else if(countBufferReferences(dmabuf) > 0) {
+				retiredDmabufs.add(dmabuf);
+			}
 			else {
 				dmabuf.free();
 			}
 		}
 		this.dmabufs = dmabufs_new;
+
+		// Free retired dmabufs once their last surface reference is gone.
+		retiredDmabufs.removeIf((dmabuf) -> {
+			if(countBufferReferences(dmabuf) > 0) return false;
+			dmabuf.free();
+			return true;
+		});
 	}
 	
 	private void deleteUnvisitedSurfaces() {
