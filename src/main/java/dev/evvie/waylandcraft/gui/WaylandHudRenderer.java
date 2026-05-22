@@ -10,7 +10,6 @@ import dev.evvie.waylandcraft.WaylandCraft.KeyboardCaptureMode;
 import dev.evvie.waylandcraft.bridge.IconSurface;
 import dev.evvie.waylandcraft.bridge.WLCAbstractWindow.SurfaceGeometry;
 import dev.evvie.waylandcraft.bridge.WLCToplevel;
-import dev.evvie.waylandcraft.desktop.DesktopEntry;
 import dev.evvie.waylandcraft.render.RenderUtils;
 import dev.evvie.waylandcraft.render.WindowFramebuffer;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
@@ -60,8 +59,6 @@ public class WaylandHudRenderer {
 		}
 		
 		for(WLCToplevel toplevel : WaylandCraft.instance.bridge.getMappedToplevels()) {
-			DesktopEntry entry = wlc.xdgManager.forAppId(toplevel.appID);
-
 			String name = toplevel.displayName();
 			if(name == null) name = "<unknown app>";
 			
@@ -78,12 +75,12 @@ public class WaylandHudRenderer {
 			int x = context.guiWidth() - font.width(name) - 10;
 			context.text(font, Component.literal(name).withStyle(style), x, yoff, color.getRGB(), true);
 			
-			if(entry != null) {
-				Identifier icon = entry.getIcon();
+			Identifier icon = toplevel.iconTexture();
+			if(icon != null) {
 				int iconX = x - font.lineHeight - 2;
 				int iconY = yoff;
 				int iconSize = font.lineHeight;
-				if(icon != null) context.blit(icon, iconX, iconY, iconX + iconSize, iconY + iconSize, 0.0f, 1.0f, 0.0f, 1.0f);
+				context.blit(icon, iconX, iconY, iconX + iconSize, iconY + iconSize, 0.0f, 1.0f, 0.0f, 1.0f);
 			}
 			
 			yoff += ystep;

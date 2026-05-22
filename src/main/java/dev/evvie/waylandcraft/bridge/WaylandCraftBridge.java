@@ -296,7 +296,15 @@ public class WaylandCraftBridge {
 			updateGeometry(toplevel);
 			toplevel.title = toplevelTitle(toplevel.getHandle());
 			toplevel.appID = toplevelAppID(toplevel.getHandle());
-			
+
+			// Poll _NET_WM_ICON for X11 windows. The native call returns null
+			// for Wayland toplevels and opens an X11 connection, so it is rate
+			// limited by the toplevel's own fetch schedule.
+			long now = System.currentTimeMillis();
+			if(toplevel.shouldFetchIcon(now)) {
+				toplevel.updateWindowIcon(toplevelX11Icon(instance, handle), now);
+			}
+
 			if(ArrayUtils.contains(minimizeRequests, handle)) toplevel.requests.minimize = true;
 			if(ArrayUtils.contains(maximizeRequests, handle)) toplevel.requests.maximize= true;
 			if(ArrayUtils.contains(unmaximizeRequests, handle)) toplevel.requests.unmaximize = true;
@@ -707,6 +715,8 @@ public class WaylandCraftBridge {
 	private static native long toplevelSurface(long instance, long handle);
 	private static native String toplevelTitle(long handle);
 	private static native String toplevelAppID(long handle);
+	// _NET_WM_ICON of an X11 toplevel as [width, height, ARGB pixels...], null otherwise
+	private static native int[] toplevelX11Icon(long instance, long handle);
 	// Resize toplevel
 	private static native void toplevelResize(long handle, int width, int height, boolean interactive);
 	// Resize toplevel override, keep maximized and fullscreen state, stop interactive resize

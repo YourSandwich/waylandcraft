@@ -21,19 +21,45 @@ import net.minecraft.client.renderer.texture.TextureManager;
 import net.minecraft.resources.Identifier;
 
 public class DesktopIcon {
-	
+
 	public final String path;
-	
+
 	private WaylandCraft wlc;
-	
+
 	private IconImage image = null;
 	private IconTexture texture = null;
 	private final Identifier identifier;
-	
+
 	public DesktopIcon(String appId, String path) {
 		this.path = path;
 		this.identifier = Identifier.fromNamespaceAndPath(WaylandCraft.MOD_ID, "icon_" + DigestUtils.sha1Hex(appId));
 		this.wlc = WaylandCraft.instance;
+	}
+
+	private DesktopIcon(Identifier identifier, IconImage image) {
+		this.path = null;
+		this.identifier = identifier;
+		this.image = image;
+		this.wlc = WaylandCraft.instance;
+	}
+
+	// Build an icon from a packed-ARGB pixel array, as published by an X11 app
+	// in its _NET_WM_ICON property (alpha in the high byte). NativeImage's RGBA
+	// format is byte-order R,G,B,A, so the channels are unpacked accordingly.
+	public static DesktopIcon fromArgb(String key, int width, int height, int[] argb) {
+		ByteBuffer buf = ByteBuffer.allocateDirect(width * height * 4);
+		for(int pixel : argb) {
+			buf.put((byte) (pixel >> 16));
+			buf.put((byte) (pixel >> 8));
+			buf.put((byte) pixel);
+			buf.put((byte) (pixel >> 24));
+		}
+		buf.flip(); // memAddress() is position-relative; rewind past the filled data
+		long addr = MemoryUtil.memAddress(buf);
+
+		Identifier identifier = Identifier.fromNamespaceAndPath(WaylandCraft.MOD_ID, "window_icon_" + DigestUtils.sha1Hex(key));
+		NativeImage image = NativeImageMixin.createImage(NativeImage.Format.RGBA, width, height, false, addr);
+		return new DesktopIcon(identifier, IconImage.direct(image, buf));
 	}
 	
 	public synchronized void preload() {

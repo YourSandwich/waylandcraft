@@ -52,6 +52,7 @@ use smithay::{
 };
 use std::ops::DerefMut;
 use std::path::PathBuf;
+use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _};
 
 // A managed window, either an xdg-shell toplevel or an X11 (Xwayland) window.
 // Both variant types are Clone + PartialEq, so the raw-handle machinery
@@ -1732,6 +1733,103 @@ pub extern "system" fn toplevelAppID<'l>(
     } else {
         std::ptr::null_mut()
     }
+}
+
+// Largest icon side we will hand to Java - keeps a Proton game's oversized
+// 256/512 px icon from being uploaded as a window texture.
+const NET_WM_ICON_CAP: u32 = 192;
+// The size we aim for; the closest image to this within the cap wins.
+const NET_WM_ICON_TARGET: u32 = 128;
+
+// Read the best _NET_WM_ICON image for `window_id` off the Xwayland display.
+// _NET_WM_ICON is a CARDINAL array of one or more images, each [w, h, then
+// w*h ARGB pixels]. Returns [w, h, pixels...] for the image whose largest
+// side is closest to NET_WM_ICON_TARGET within NET_WM_ICON_CAP, or None.
+fn read_net_wm_icon(display: u32, window_id: u32) -> Option<Vec<jint>> {
+    // X11Wm keeps its connection private, so open a short-lived one - the same
+    // approach xdnd.rs takes for its second X11 connection.
+    let (conn, _) = x11rb::connect(Some(&format!(":{display}"))).ok()?;
+    let icon_atom = conn
+        .intern_atom(false, b"_NET_WM_ICON")
+        .ok()?
+        .reply()
+        .ok()?
+        .atom;
+    let prop = conn
+        .get_property(false, window_id, icon_atom, AtomEnum::CARDINAL, 0, u32::MAX)
+        .ok()?
+        .reply()
+        .ok()?;
+    let values: Vec<u32> = prop.value32()?.collect();
+
+    let mut best: Option<(u32, u32, &[u32])> = None;
+    let mut idx = 0;
+    while idx + 2 <= values.len() {
+        let (w, h) = (values[idx], values[idx + 1]);
+        let count = (w as usize).checked_mul(h as usize)?;
+        if w == 0 || h == 0 || idx + 2 + count > values.len() {
+            break;
+        }
+        let pixels = &values[idx + 2..idx + 2 + count];
+        idx += 2 + count;
+
+        let side = w.max(h);
+        if side > NET_WM_ICON_CAP {
+            continue;
+        }
+        // Closest side to the target wins; on a tie, the larger image.
+        let better = best.is_none_or(|(bw, bh, _)| {
+            let bside = bw.max(bh);
+            side.abs_diff(NET_WM_ICON_TARGET)
+                < bside.abs_diff(NET_WM_ICON_TARGET)
+                || (side.abs_diff(NET_WM_ICON_TARGET)
+                    == bside.abs_diff(NET_WM_ICON_TARGET)
+                    && side > bside)
+        });
+        if better {
+            best = Some((w, h, pixels));
+        }
+    }
+
+    let (w, h, pixels) = best?;
+    let mut icon = Vec::with_capacity(pixels.len() + 2);
+    icon.push(w as jint);
+    icon.push(h as jint);
+    icon.extend(pixels.iter().map(|p| *p as jint));
+    Some(icon)
+}
+
+// The _NET_WM_ICON image of an X11 toplevel as [w, h, ARGB pixels...], or null
+// for an xdg toplevel or an X11 window that publishes no icon. The mapped X11
+// window id is tried first - some clients set the property only on the frame
+// child - then the top-level window id.
+#[unsafe(export_name = "Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_\
+    toplevelX11Icon")]
+pub extern "system" fn toplevelX11Icon<'l>(
+    env: JNIEnv<'l>,
+    _class: JClass<'l>,
+    ptr: jlong,
+    handle: jlong,
+) -> jarray {
+    let instance = jptr_to_instance(ptr);
+    let Some(display) = instance.state.xdisplay else {
+        return std::ptr::null_mut();
+    };
+    let WlcWindow::X11(window) = jptr_to_toplevel(handle) else {
+        return std::ptr::null_mut();
+    };
+
+    let icon = window
+        .mapped_window_id()
+        .and_then(|id| read_net_wm_icon(display, id))
+        .or_else(|| read_net_wm_icon(display, window.window_id()));
+    let Some(icon) = icon else {
+        return std::ptr::null_mut();
+    };
+
+    let array = env.new_int_array(icon.len() as jsize).unwrap();
+    env.set_int_array_region(&array, 0, &icon).unwrap();
+    array.into_raw()
 }
 
 #[unsafe(export_name = "Java_dev_evvie_waylandcraft_bridge_WaylandCraftBridge_\

@@ -17,7 +17,6 @@ import dev.evvie.waylandcraft.bridge.WLCSurface;
 import dev.evvie.waylandcraft.bridge.WLCToplevel;
 import dev.evvie.waylandcraft.bridge.WaylandCraftBridge;
 import dev.evvie.waylandcraft.bridge.WaylandCraftBridge.Size;
-import dev.evvie.waylandcraft.desktop.DesktopEntry;
 import dev.evvie.waylandcraft.grabs.WindowGrab;
 import dev.evvie.waylandcraft.mixin.IMouseHandlerMixin;
 import dev.evvie.waylandcraft.render.RenderUtils;
@@ -96,13 +95,7 @@ public class WindowManagerScreen extends Screen {
 			
 			@Override
 			public @Nullable Identifier iconForElement(WLCToplevel element) {
-				DesktopEntry entry = wlc.xdgManager.forAppId(element.appID);
-				if(entry == null) return null;
-				
-				Identifier icon = entry.getIcon();
-				if(icon == null) return null;
-				
-				return icon;
+				return element.iconTexture();
 			}
 		};
 		addRenderableWidget(selector);
